@@ -58,7 +58,7 @@ class BatchMessageContainer {
 
     ~BatchMessageContainer();
 
-    void add(const Message& msg, SendCallback sendCallback, bool disableCheck = false);
+    Result add(const Message& msg, SendCallback sendCallback, bool disableCheck = false);
 
     SharedBuffer getBatchedPayload();
 
@@ -109,7 +109,7 @@ class BatchMessageContainer {
 
     void startTimer();
 
-    void sendMessage(FlushCallback callback);
+    Result sendMessage(FlushCallback callback);
 };
 
 bool BatchMessageContainer::hasSpaceInBatch(const Message& msg) const {

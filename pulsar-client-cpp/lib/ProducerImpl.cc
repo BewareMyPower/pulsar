@@ -353,7 +353,7 @@ void ProducerImpl::triggerFlush() {
     }
 }
 
-void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
+Result ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
     producerStatsBasePtr_->messageSent(msg);
     SendCallback cb =
         std::bind(&ProducerImpl::statsCallBackHandler, shared_from_this(), std::placeholders::_1,
@@ -374,7 +374,7 @@ void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
         SharedBuffer encryptedPayload;
         if (!encryptMessage(msg.impl_->metadata, payload, encryptedPayload)) {
             cb(ResultCryptoError, msg.getMessageId());
-            return;
+            return ResultCryptoError;
         }
         payload = encryptedPayload;
 
@@ -382,7 +382,7 @@ void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
             LOG_DEBUG(getName() << " - compressed Message payload size" << payloadSize << "cannot exceed "
                                 << keepMaxMessageSize_ << " bytes");
             cb(ResultMessageTooBig, msg.getMessageId());
-            return;
+            return ResultMessageTooBig;
         }
     }
 
@@ -400,7 +400,7 @@ void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
             pendingMessagesQueue_.release(1);
         }
         cb(ResultAlreadyClosed, msg.getMessageId());
-        return;
+        return ResultAlreadyClosed;
     }
 
     if (msg.impl_->metadata.has_producer_name()) {
@@ -410,7 +410,7 @@ void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
             pendingMessagesQueue_.release(1);
         }
         cb(ResultInvalidMessage, msg.getMessageId());
-        return;
+        return ResultInvalidMessage;
     }
 
     int64_t sequenceId;
@@ -431,17 +431,17 @@ void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
         }
         lock.unlock();
         cb(ResultProducerQueueIsFull, msg.getMessageId());
-        return;
+        return ResultProducerQueueIsFull;
     }
 
     // If we reach this point then you have a reserved spot on the queue
 
     if (batchMessageContainer && !msg.impl_->metadata.has_deliver_at_time()) {
         // Batching is enabled and the message is not delayed
-        batchMessageContainer->add(msg, cb);
-        return;
+        return batchMessageContainer->add(msg, cb);
     }
     sendMessage(msg, cb);
+    return ResultOk;
 }
 
 // Precondition -

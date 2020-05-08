@@ -148,7 +148,7 @@ void PartitionedProducerImpl::handleSinglePartitionProducerCreated(Result result
 }
 
 // override
-void PartitionedProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
+Result PartitionedProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
     // get partition for this message from router policy
     Lock producersLock(producersMutex_);
     short partition = (short)(routerPolicy_->getPartition(msg, *topicMetadata_));
@@ -157,13 +157,13 @@ void PartitionedProducerImpl::sendAsync(const Message& msg, SendCallback callbac
         // change me: abort or notify failure in callback?
         //          change to appropriate error if callback
         callback(ResultUnknownError, msg.getMessageId());
-        return;
+        return ResultUnknownError;
     }
     // find a producer for that partition, index should start from 0
     ProducerImplPtr producer = producers_[partition];
     producersLock.unlock();
     // send message on that partition
-    producer->sendAsync(msg, callback);
+    return producer->sendAsync(msg, callback);
 }
 
 // override

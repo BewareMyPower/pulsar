@@ -70,7 +70,7 @@ class ProducerImpl : public HandlerBase,
 
     virtual const std::string& getTopic() const;
 
-    virtual void sendAsync(const Message& msg, SendCallback callback);
+    virtual Result sendAsync(const Message& msg, SendCallback callback);
 
     virtual void closeAsync(CloseCallback callback);
 

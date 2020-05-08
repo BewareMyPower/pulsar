@@ -46,7 +46,7 @@ class PartitionedProducerImpl : public ProducerImplBase,
                             const ProducerConfiguration& config);
     virtual ~PartitionedProducerImpl();
 
-    virtual void sendAsync(const Message& msg, SendCallback callback);
+    virtual Result sendAsync(const Message& msg, SendCallback callback);
 
     /*
      * closes all active producers, it can be called explicitly from client as well as createProducer

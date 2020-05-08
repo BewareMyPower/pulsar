@@ -36,24 +36,28 @@ const std::string& Producer::getTopic() const { return impl_ != NULL ? impl_->ge
 
 Result Producer::send(const Message& msg) {
     Promise<Result, MessageId> promise;
-    sendAsync(msg, WaitForCallbackValue<MessageId>(promise));
+    Result result = sendAsync(msg, WaitForCallbackValue<MessageId>(promise));
 
     if (!promise.isComplete()) {
         impl_->triggerFlush();
     }
 
+    if (result != ResultOk) {
+        return result;
+    }
+
     MessageId mi;
-    Result result = promise.getFuture().get(mi);
+    result = promise.getFuture().get(mi);
     return result;
 }
 
-void Producer::sendAsync(const Message& msg, SendCallback callback) {
+Result Producer::sendAsync(const Message& msg, SendCallback callback) {
     if (!impl_) {
         callback(ResultProducerNotInitialized, msg.getMessageId());
-        return;
+        return ResultProducerNotInitialized;
     }
 
-    impl_->sendAsync(msg, callback);
+    return impl_->sendAsync(msg, callback);
 }
 
 const std::string& Producer::getProducerName() const { return impl_->getProducerName(); }

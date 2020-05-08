@@ -80,8 +80,15 @@ class PULSAR_PUBLIC Producer {
      *
      * @param msg message to publish
      * @param callback the callback to get notification of the completion
+     * @return ResultOk if the message was sent to the internal queue successfully
+     * @return ResultProducerQueueIsFull if queue is full and the BlockIfQueueFull config is false
+     * @return ResultInvalidMessage if the message has already been sent before
+     * @return ResultAlreadyClosed if the producer has already closed
+     * @return ResultMessageTooBig if the message payload size exceeds max message size
+     * @return ResultCryptoError if the message failed to be encrypted
+     * @return ResultUnknownError if an invalid partition was chosen
      */
-    void sendAsync(const Message& msg, SendCallback callback);
+    Result sendAsync(const Message& msg, SendCallback callback);
 
     /**
      * Flush all the messages buffered in the client and wait until all messages have been successfully

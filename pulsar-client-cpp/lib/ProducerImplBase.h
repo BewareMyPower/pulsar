@@ -35,7 +35,7 @@ class ProducerImplBase {
     virtual int64_t getLastSequenceId() const = 0;
     virtual const std::string& getSchemaVersion() const = 0;
 
-    virtual void sendAsync(const Message& msg, SendCallback callback) = 0;
+    virtual Result sendAsync(const Message& msg, SendCallback callback) = 0;
     virtual void closeAsync(CloseCallback callback) = 0;
     virtual void start() = 0;
     virtual void shutdown() = 0;
