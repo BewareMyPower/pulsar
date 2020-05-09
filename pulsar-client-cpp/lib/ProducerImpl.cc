@@ -422,7 +422,8 @@ Result ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
     setMessageMetadata(msg, sequenceId, uncompressedSize);
 
     // reserving a spot and going forward - not blocking
-    if (!conf_.getBlockIfQueueFull() && !pendingMessagesQueue_.tryReserve(1)) {
+    bool hasReservedOneSpot = pendingMessagesQueue_.tryReserve(1);
+    if (!conf_.getBlockIfQueueFull() && !hasReservedOneSpot) {
         LOG_DEBUG(getName() << " - Producer Queue is full");
         // If queue is full sending the batch immediately, no point waiting till batchMessagetimeout
         if (batchMessageContainer) {
@@ -438,7 +439,11 @@ Result ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
 
     if (batchMessageContainer && !msg.impl_->metadata.has_deliver_at_time()) {
         // Batching is enabled and the message is not delayed
-        return batchMessageContainer->add(msg, cb);
+        Result result = batchMessageContainer->add(msg, cb);
+        if (result != ResultOk && hasReservedOneSpot) {
+            pendingMessagesQueue_.release(1);
+        }
+        return result;
     }
     sendMessage(msg, cb);
     return ResultOk;
