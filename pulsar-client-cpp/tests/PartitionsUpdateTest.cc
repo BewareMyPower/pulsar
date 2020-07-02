@@ -31,10 +31,9 @@ using namespace pulsar;
 static const std::string serviceUrl = "pulsar://localhost:6650";
 static const std::string adminUrl = "http://localhost:8080/";
 
-static const std::string topicNameSuffix = "public/default/partitions-update-test-topic";
-static const std::string topicName = "persistent://" + topicNameSuffix;
-static const std::string topicOperateUrl =
-    adminUrl + "admin/v2/persistent/" + topicNameSuffix + "/partitions";
+inline std::string createTopicOperateUrl(const std::string& topicName) {
+    return adminUrl + "admin/v2/persistent/public/default/" + topicName + "/partitions";
+}
 
 static ClientConfiguration newClientConfig(bool enablePartitionsUpdate) {
     ClientConfiguration clientConfig;
@@ -52,18 +51,20 @@ static ClientConfiguration newClientConfig(bool enablePartitionsUpdate) {
 // Use std::set because it doesn't allow repeated elements.
 class PartitionsSet {
    public:
+    PartitionsSet(const std::string& topicName) : topicName_(topicName) {}
+
     size_t size() const { return names_.size(); }
 
     Result initProducer(bool enablePartitionsUpdate) {
         clientForProducer_.reset(new Client(serviceUrl, newClientConfig(enablePartitionsUpdate)));
         const auto producerConfig =
             ProducerConfiguration().setPartitionsRoutingMode(ProducerConfiguration::RoundRobinDistribution);
-        return clientForProducer_->createProducer(topicName, producerConfig, producer_);
+        return clientForProducer_->createProducer(topicName_, producerConfig, producer_);
     }
 
     Result initConsumer(bool enablePartitionsUpdate) {
         clientForConsumer_.reset(new Client(serviceUrl, newClientConfig(enablePartitionsUpdate)));
-        return clientForConsumer_->subscribe(topicName, "SubscriptionName", consumer_);
+        return clientForConsumer_->subscribe(topicName_, "SubscriptionName", consumer_);
     }
 
     void close() {
@@ -89,6 +90,8 @@ class PartitionsSet {
     }
 
    private:
+    std::string topicName_;
+
     std::set<std::string> names_;
 
     std::unique_ptr<Client> clientForProducer_;
@@ -118,13 +121,16 @@ TEST(PartitionsUpdateTest, testConfigPartitionsUpdateInterval) {
 }
 
 TEST(PartitionsUpdateTest, testPartitionsUpdate) {
+    const std::string topicName = "partitions-update-test-partitions-update";
+    const std::string topicOperateUrl = createTopicOperateUrl(topicName);
+
     // Ensure `topicName` doesn't exist before created
     makeDeleteRequest(topicOperateUrl);
     // Create a 2 partitions topic
     int res = makePutRequest(topicOperateUrl, "2");
     ASSERT_TRUE(res == 204 || res == 409) << "res: " << res;
 
-    PartitionsSet partitionsSet;
+    PartitionsSet partitionsSet(topicName);
 
     // 1. Both producer and consumer enable partitions update
     ASSERT_EQ(ResultOk, partitionsSet.initProducer(true));
@@ -173,4 +179,110 @@ TEST(PartitionsUpdateTest, testPartitionsUpdate) {
     partitionsSet.doSendAndReceive(10, 10);
     ASSERT_EQ(7, partitionsSet.size());
     partitionsSet.close();
+}
+
+TEST(PartitionsUpdateTest, testMultiFailoverConsumers) {
+    const std::string topicName = "partitions-update-test-multi-failover-consumers";
+    const std::string topicOperateUrl = createTopicOperateUrl(topicName);
+    const std::string subscriptionName = "SubscriptionName";
+
+    makeDeleteRequest(topicOperateUrl);
+
+    // Create a 1 partition topic
+    int res = makePutRequest(topicOperateUrl, "1");
+    ASSERT_TRUE(res == 204 || res == 409) << "res: " << res;
+
+    Client client(serviceUrl, newClientConfig(true));
+    const auto producerConfig =
+        ProducerConfiguration().setPartitionsRoutingMode(ProducerConfiguration::RoundRobinDistribution);
+    const auto consumerConfig = ConsumerConfiguration().setConsumerType(ConsumerFailover);
+
+    Consumer consumers[3];
+    ASSERT_EQ(ResultOk, client.subscribe(topicName, subscriptionName, consumerConfig, consumers[0]));
+
+    Producer producer;
+    ASSERT_EQ(ResultOk, client.createProducer(topicName, producerConfig, producer));
+
+    auto sendInt = [&producer](int i) -> Result {
+        Message msg = MessageBuilder().setContent(std::to_string(i)).build();
+        return producer.send(msg);
+    };
+
+    // Increase partitions to 2
+    res = makePostRequest(topicOperateUrl, "2");
+    ASSERT_TRUE(res == 204 || res == 409) << "res: " << res;
+
+    waitForPartitionsUpdated();
+
+    for (int i = 0; i < 10; i++) {
+        ASSERT_EQ(ResultOk, sendInt(i));
+    }
+
+    Message msg;
+    for (int i = 0; i < 10; i++) {
+        ASSERT_EQ(ResultOk, consumers[0].receive(msg, 3000));
+        ASSERT_EQ(ResultOk, consumers[0].acknowledge(msg));
+    }
+
+    // Add new consumers to the same subscription
+    //   Before: { partitions: 2, consumers: 1 }
+    //   After:  { partitions: 2, consumers: 3 }
+    ASSERT_EQ(ResultOk, client.subscribe(topicName, subscriptionName, consumerConfig, consumers[1]));
+    ASSERT_EQ(ResultOk, client.subscribe(topicName, subscriptionName, consumerConfig, consumers[2]));
+
+    std::set<int32_t> partitionSetList[3];
+
+    // `consumers[consumerIndex]` would receive as many messages as possible until timeout
+    // The message id would be inserted to `partitionSetList[consumerIndex]`
+    auto receiveLoop = [&consumers, &partitionSetList](int consumerIndex) {
+        std::string name = "Consumer-" + std::to_string(consumerIndex);
+        while (true) {
+            Message msg;
+            Result result = consumers[consumerIndex].receive(msg, 3000);  // 3 seconds timeout
+            if (result == ResultTimeout) break;
+
+            ASSERT_EQ(result, ResultOk);
+            partitionSetList[consumerIndex].emplace(msg.getMessageId().partition());
+        }
+    };
+
+    std::thread threads[3];
+    for (int i = 0; i < 3; i++) {
+        threads[i] = std::thread(receiveLoop, i);
+    }
+    for (int i = 0; i < 30; i++) {
+        ASSERT_EQ(ResultOk, sendInt(i));
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+    // Each consumer should receive messages from only one partition, except `consumers[2]`
+    ASSERT_EQ(partitionSetList[0].size(), 1);
+    ASSERT_EQ(partitionSetList[1].size(), 1);
+    ASSERT_EQ(partitionSetList[2].size(), 0);
+
+    // Increase partitions to 3
+    //   Before: { partitions: 2, consumers: 3 }
+    //   After:  { partitions: 3, consumers: 3 }
+    res = makePostRequest(topicOperateUrl, "3");
+    ASSERT_TRUE(res == 204 || res == 409) << "res: " << res;
+
+    waitForPartitionsUpdated();
+
+    // Now `consumers[2]` would be assigned a partition
+    for (int i = 0; i < 3; i++) {
+        threads[i] = std::thread(receiveLoop, i);
+    }
+    for (int i = 0; i < 30; i++) {
+        ASSERT_EQ(ResultOk, sendInt(i));
+    }
+    for (auto& t : threads) {
+        t.join();
+    }
+    // Each consumer should receive messages from only one partition
+    ASSERT_EQ(partitionSetList[0].size(), 1);
+    ASSERT_EQ(partitionSetList[1].size(), 1);
+    ASSERT_EQ(partitionSetList[2].size(), 1);
+
+    client.close();
 }
