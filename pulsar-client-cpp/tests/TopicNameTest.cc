@@ -164,3 +164,20 @@ TEST(TopicNameTest, testPartitionIndex) {
     EXPECT_EQ(TopicName::get("my-topic-partition-unknown")->getPartitionIndex(), -3);
     EXPECT_EQ(TopicName::get("my-topic-partition-9999999999")->getPartitionIndex(), -4);
 }
+
+TEST(TopicNameTest, testPartitionedName) {
+    std::string defaultNamespacePrefix = "persistent://public/default/";
+
+    EXPECT_EQ(TopicName::get("my-topic-partition-0")->getPartitionedTopicName(),
+              defaultNamespacePrefix + "my-topic");
+    EXPECT_EQ(TopicName::get("my-topic-partition-1")->getPartitionedTopicName(),
+              defaultNamespacePrefix + "my-topic");
+
+    EXPECT_EQ(TopicName::get("my-topic")->getPartitionedTopicName(), defaultNamespacePrefix + "my-topic");
+    EXPECT_EQ(TopicName::get("my-topic-partition-01")->getPartitionedTopicName(),
+              defaultNamespacePrefix + "my-topic-partition-01");
+    EXPECT_EQ(TopicName::get("my-topic-partition-unknown")->getPartitionedTopicName(),
+              defaultNamespacePrefix + "my-topic-partition-unknown");
+    EXPECT_EQ(TopicName::get("my-topic-partition-9999999999")->getPartitionedTopicName(),
+              defaultNamespacePrefix + "my-topic-partition-9999999999");
+}

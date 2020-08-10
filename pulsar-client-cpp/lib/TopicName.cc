@@ -262,4 +262,12 @@ int TopicName::getPartitionIndex(const std::string& topic) {
     }
 }
 
+std::string TopicName::getPartitionedTopicName() const {
+    if (isPartitioned()) {
+        return topicName_.substr(0, topicName_.rfind(PARTITION_NAME_SUFFIX));
+    } else {
+        return topicName_;
+    }
+}
+
 }  // namespace pulsar
