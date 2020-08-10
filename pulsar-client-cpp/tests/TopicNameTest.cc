@@ -154,3 +154,13 @@ TEST(TopicNameTest, testExtraArguments) {
         TopicName::get("persistent:::/property/cluster/namespace/topic/some/extra/args");
     ASSERT_FALSE(topicName);
 }
+
+TEST(TopicNameTest, testPartitionIndex) {
+    EXPECT_EQ(TopicName::get("my-topic-partition-0")->getPartitionIndex(), 0);
+    EXPECT_EQ(TopicName::get("my-topic-partition-1")->getPartitionIndex(), 1);
+
+    EXPECT_EQ(TopicName::get("my-topic")->getPartitionIndex(), -1);
+    EXPECT_EQ(TopicName::get("my-topic-partition-01")->getPartitionIndex(), -2);
+    EXPECT_EQ(TopicName::get("my-topic-partition-unknown")->getPartitionIndex(), -3);
+    EXPECT_EQ(TopicName::get("my-topic-partition-9999999999")->getPartitionIndex(), -4);
+}

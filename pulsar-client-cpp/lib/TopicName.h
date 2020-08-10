@@ -44,6 +44,7 @@ class PULSAR_PUBLIC TopicName : public ServiceUnitId {
     std::string localName_;
     bool isV2Topic_;
     std::shared_ptr<NamespaceName> namespaceName_;
+    int partitionIndex_;
 
    public:
     bool isV2Topic();
@@ -61,6 +62,12 @@ class PULSAR_PUBLIC TopicName : public ServiceUnitId {
     bool operator==(const TopicName& other);
     static std::string getEncodedName(const std::string& nameBeforeEncoding);
     const std::string getTopicPartitionName(unsigned int partition);
+
+    static const std::string PARTITION_NAME_SUFFIX;
+    static int getPartitionIndex(const std::string& topic);
+
+    int getPartitionIndex() const noexcept { return partitionIndex_; }
+    bool isPartitioned() const noexcept { return partitionIndex_ >= 0; }
 
    private:
     static CURL* getCurlHandle();

@@ -38,7 +38,6 @@ class PartitionedProducerImpl : public ProducerImplBase,
         Closed,
         Failed
     };
-    const static std::string PARTITION_NAME_SUFFIX;
 
     typedef std::unique_lock<std::mutex> Lock;
 
