@@ -55,6 +55,12 @@ class ConsumerImplBase {
     virtual void seekAsync(const MessageId& msgId, ResultCallback callback) = 0;
     virtual void seekAsync(uint64_t timestamp, ResultCallback callback) = 0;
     virtual void negativeAcknowledge(const MessageId& msgId) = 0;
+    virtual void subscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
+        callback(ResultOperationNotSupported);
+    }
+    virtual void unsubscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
+        callback(ResultOperationNotSupported);
+    }
 
    private:
     virtual void setNegativeAcknowledgeEnabledForTesting(bool enabled) = 0;

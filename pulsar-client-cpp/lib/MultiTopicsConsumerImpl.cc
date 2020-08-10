@@ -288,6 +288,11 @@ void MultiTopicsConsumerImpl::handleUnsubscribedAsync(Result result,
     }
 }
 
+void MultiTopicsConsumerImpl::subscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
+    subscribeOneTopicAsync(topic).addListener(
+        [callback](Result result, const Consumer& consumer) { callback(result); });
+}
+
 void MultiTopicsConsumerImpl::unsubscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
     std::map<std::string, int>::iterator it = topicsPartitions_.find(topic);
     if (it == topicsPartitions_.end()) {

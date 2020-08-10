@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include "../lib/Future.h"
+#include "../lib/Latch.h"
 #include "../lib/Utils.h"
 
 using namespace pulsar;
@@ -93,5 +94,29 @@ TEST(ConsumerTest, consumerNotInitialized) {
         promise.getFuture().get(result);
 
         ASSERT_EQ(ResultConsumerNotInitialized, result);
+    }
+
+    const std::string topic = "test-topic";
+
+    ASSERT_EQ(ResultConsumerNotInitialized, consumer.subscribeOneTopic(topic));
+
+    {
+        Latch latch(1);
+        consumer.subscribeOneTopicAsync(topic, [&latch](Result result) {
+            ASSERT_EQ(ResultConsumerNotInitialized, result);
+            latch.countdown();
+        });
+        latch.wait();
+    }
+
+    ASSERT_EQ(ResultConsumerNotInitialized, consumer.unsubscribeOneTopic(topic));
+
+    {
+        Latch latch(1);
+        consumer.unsubscribeOneTopicAsync(topic, [&latch](Result result) {
+            ASSERT_EQ(ResultConsumerNotInitialized, result);
+            latch.countdown();
+        });
+        latch.wait();
     }
 }

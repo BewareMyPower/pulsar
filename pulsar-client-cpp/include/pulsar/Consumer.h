@@ -328,6 +328,38 @@ class PULSAR_PUBLIC Consumer {
      */
     virtual void seekAsync(uint64_t timestamp, ResultCallback callback);
 
+    /**
+     * Subscribe one more topic
+     *
+     * @param topic the topic to subscribe
+     *
+     * @return ResultOk if the topic was subscribed successfully
+     */
+    virtual Result subscribeOneTopic(const std::string& topic);
+
+    /**
+     * Asynchronously subscribe one more topic
+     *
+     * @param topic the topic to subscribe
+     */
+    virtual void subscribeOneTopicAsync(const std::string& topic, ResultCallback callback);
+
+    /**
+     * Unsubscribe a given topic
+     *
+     * @param topic the topic to unsubscribe
+     *
+     * @return ResultOk if the topic was unsubscribed successfully
+     */
+    virtual Result unsubscribeOneTopic(const std::string& topic);
+
+    /**
+     * Asynchronously unsubscribe a given topic
+     *
+     * @param topic the topic to unsubscribe
+     */
+    virtual void unsubscribeOneTopicAsync(const std::string& topic, ResultCallback callback);
+
    private:
     ConsumerImplBasePtr impl_;
     explicit Consumer(ConsumerImplBasePtr);
