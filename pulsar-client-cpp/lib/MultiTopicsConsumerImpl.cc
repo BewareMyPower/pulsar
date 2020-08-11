@@ -17,6 +17,7 @@
  * under the License.
  */
 #include "MultiTopicsConsumerImpl.h"
+#include "MultiResultCallback.h"
 
 DECLARE_LOG_OBJECT()
 
@@ -294,14 +295,13 @@ void MultiTopicsConsumerImpl::subscribeOneTopicAsync(const std::string& topic, R
 }
 
 void MultiTopicsConsumerImpl::unsubscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
-    std::map<std::string, int>::iterator it = topicsPartitions_.find(topic);
-    if (it == topicsPartitions_.end()) {
-        LOG_ERROR("TopicsConsumer does not subscribe topic : " << topic << " subscription - "
-                                                               << subscriptionName_);
-        callback(ResultTopicNotFound);
-        return;
+    TopicNamePtr topicName;
+    if (!(topicName = TopicName::get(topic))) {
+        LOG_ERROR("TopicName invalid: " << topic);
+        callback(ResultInvalidTopicName);
     }
 
+    Lock lock(mutex_);
     if (state_ == Closing || state_ == Closed) {
         LOG_ERROR("TopicsConsumer already closed when unsubscribe topic: " << topic << " subscription - "
                                                                            << subscriptionName_);
@@ -309,30 +309,40 @@ void MultiTopicsConsumerImpl::unsubscribeOneTopicAsync(const std::string& topic,
         return;
     }
 
-    TopicNamePtr topicName;
-    if (!(topicName = TopicName::get(topic))) {
-        LOG_ERROR("TopicName invalid: " << topic);
-        callback(ResultUnknownError);
-    }
-    int numberPartitions = it->second;
-    std::shared_ptr<std::atomic<int>> consumerUnsubed = std::make_shared<std::atomic<int>>(0);
+    // TODO: Cancel `autoDiscoveryTimer_` for regex subscription
 
-    for (int i = 0; i < numberPartitions; i++) {
-        std::string topicPartitionName = topicName->getTopicPartitionName(i);
-        std::map<std::string, ConsumerImplPtr>::iterator iterator = consumers_.find(topicPartitionName);
+    // TODO:
 
-        if (consumers_.end() == iterator) {
-            LOG_ERROR("TopicsConsumer not subscribed on topicPartitionName: " << topicPartitionName);
-            callback(ResultUnknownError);
+    const std::string topicPartName = topicName->getPartitionedTopicName();
+    std::vector<ConsumerImplPtr> consumersToUnsub;
+    for (const auto& topicAndConsumer : consumers_) {
+        ConsumerImplPtr consumer = topicAndConsumer.second;
+        if (TopicName::get(consumer->getTopic())->getPartitionedTopicName() == topicPartName) {
+            consumersToUnsub.emplace_back(consumer);
         }
+    }
 
-        (iterator->second)
-            ->unsubscribeAsync(std::bind(&MultiTopicsConsumerImpl::handleOneTopicUnsubscribedAsync,
-                                         shared_from_this(), std::placeholders::_1, consumerUnsubed,
-                                         numberPartitions, topicName, topicPartitionName, callback));
+    auto numConsumersToUnsub = std::make_shared<std::atomic_int>(consumersToUnsub.size());
+    auto self = shared_from_this();
+    for (const auto& consumer : consumersToUnsub) {
+        consumer->unsubscribeAsync([this, self, numConsumersToUnsub, consumer, callback](Result result) {
+            if (result == ResultOk) {
+                int numLeft = --(*numConsumersToUnsub);
+                if (numLeft <= 0) {
+                    LOG_INFO("Unsubscribed all of the partition consumer for TopicsConsumer. - "
+                             << consumerStr_);
+                }
+            } else {
+                setState(Failed);
+                LOG_ERROR("Error Closing one of the consumers in TopicsConsumer, result: "
+                          << result << " topicPartitionName - " << topicPartitionName);
+                callback(result);
+            }
+        });
     }
 }
 
+// TODO: delete
 void MultiTopicsConsumerImpl::handleOneTopicUnsubscribedAsync(
     Result result, std::shared_ptr<std::atomic<int>> consumerUnsubed, int numberPartitions,
     TopicNamePtr topicNamePtr, std::string& topicPartitionName, ResultCallback callback) {
