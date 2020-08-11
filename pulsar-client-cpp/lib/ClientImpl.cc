@@ -224,12 +224,9 @@ void ClientImpl::handleReaderMetadataLookup(const Result result, const LookupDat
         return;
     }
 
-    ReaderImplPtr reader = std::make_shared<ReaderImpl>(shared_from_this(), topicName->toString(), conf,
-                                                        getListenerExecutorProvider()->get(), callback);
+    ReaderImplPtr reader =
+        std::make_shared<ReaderImpl>(shared_from_this(), topicName->toString(), conf, callback);
     reader->start(startMessageId);
-
-    Lock lock(mutex_);
-    consumers_.push_back(reader->getConsumer());
 }
 
 void ClientImpl::subscribeWithRegexAsync(const std::string& regexPattern, const std::string& consumerName,

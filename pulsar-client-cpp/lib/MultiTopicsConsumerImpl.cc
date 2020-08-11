@@ -295,51 +295,7 @@ void MultiTopicsConsumerImpl::subscribeOneTopicAsync(const std::string& topic, R
 }
 
 void MultiTopicsConsumerImpl::unsubscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
-    TopicNamePtr topicName;
-    if (!(topicName = TopicName::get(topic))) {
-        LOG_ERROR("TopicName invalid: " << topic);
-        callback(ResultInvalidTopicName);
-    }
-
-    Lock lock(mutex_);
-    if (state_ == Closing || state_ == Closed) {
-        LOG_ERROR("TopicsConsumer already closed when unsubscribe topic: " << topic << " subscription - "
-                                                                           << subscriptionName_);
-        callback(ResultAlreadyClosed);
-        return;
-    }
-
-    // TODO: Cancel `autoDiscoveryTimer_` for regex subscription
-
-    // TODO:
-
-    const std::string topicPartName = topicName->getPartitionedTopicName();
-    std::vector<ConsumerImplPtr> consumersToUnsub;
-    for (const auto& topicAndConsumer : consumers_) {
-        ConsumerImplPtr consumer = topicAndConsumer.second;
-        if (TopicName::get(consumer->getTopic())->getPartitionedTopicName() == topicPartName) {
-            consumersToUnsub.emplace_back(consumer);
-        }
-    }
-
-    auto numConsumersToUnsub = std::make_shared<std::atomic_int>(consumersToUnsub.size());
-    auto self = shared_from_this();
-    for (const auto& consumer : consumersToUnsub) {
-        consumer->unsubscribeAsync([this, self, numConsumersToUnsub, consumer, callback](Result result) {
-            if (result == ResultOk) {
-                int numLeft = --(*numConsumersToUnsub);
-                if (numLeft <= 0) {
-                    LOG_INFO("Unsubscribed all of the partition consumer for TopicsConsumer. - "
-                             << consumerStr_);
-                }
-            } else {
-                setState(Failed);
-                LOG_ERROR("Error Closing one of the consumers in TopicsConsumer, result: "
-                          << result << " topicPartitionName - " << topicPartitionName);
-                callback(result);
-            }
-        });
-    }
+    callback(ResultOk);
 }
 
 // TODO: delete

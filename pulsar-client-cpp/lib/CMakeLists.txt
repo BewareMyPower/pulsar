@@ -63,23 +63,6 @@ set_property(TARGET pulsarShared PROPERTY VERSION ${LIBRARY_VERSION})
 target_link_libraries(pulsarShared ${COMMON_LIBS} ${CMAKE_DL_LIBS})
 
 
-### pulsarSharedNossl not static link ssl, it could avoid rebuild libpulsar when ssl lib need update.
-### pulsarSharedNossl is build under condition LINK_STATIC=ON, we should replace static ssl libs with dynamic libs.
-SET(COMMON_LIBS_NOSSL ${COMMON_LIBS})
-if (NOT ${RECORD_OPENSSL_SSL_LIBRARY} MATCHES ".+\\.a$")
-    LIST(REMOVE_ITEM COMMON_LIBS_NOSSL ${OPENSSL_SSL_LIBRARY})
-    LIST(APPEND COMMON_LIBS_NOSSL ${RECORD_OPENSSL_SSL_LIBRARY})
-endif ()
-if (NOT ${RECORD_OPENSSL_CRYPTO_LIBRARY} MATCHES ".+\\.a$")
-    LIST(REMOVE_ITEM COMMON_LIBS_NOSSL  ${OPENSSL_CRYPTO_LIBRARY})
-    LIST(APPEND COMMON_LIBS_NOSSL ${RECORD_OPENSSL_CRYPTO_LIBRARY})
-endif ()
-
-add_library(pulsarSharedNossl SHARED ${PULSAR_SOURCES})
-set_property(TARGET pulsarSharedNossl PROPERTY OUTPUT_NAME ${LIB_NAME_SHARED}nossl)
-set_property(TARGET pulsarSharedNossl PROPERTY VERSION ${LIBRARY_VERSION})
-target_link_libraries(pulsarSharedNossl ${COMMON_LIBS_NOSSL} ${CMAKE_DL_LIBS})
-
 add_library(pulsarStatic STATIC ${PULSAR_SOURCES})
 set_property(TARGET pulsarStatic PROPERTY OUTPUT_NAME ${LIB_NAME})
 set_property(TARGET pulsarStatic PROPERTY VERSION ${LIBRARY_VERSION})
@@ -144,5 +127,4 @@ endif(LINK_STATIC)
 
 install(TARGETS pulsarStatic DESTINATION lib)
 install(TARGETS pulsarShared RUNTIME DESTINATION bin LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)
-install(TARGETS pulsarSharedNossl RUNTIME DESTINATION bin LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)
 install(DIRECTORY "../include/pulsar" DESTINATION include)
