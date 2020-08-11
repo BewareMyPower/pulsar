@@ -40,6 +40,8 @@ class PULSAR_PUBLIC Reader {
      */
     Reader();
 
+    ~Reader();
+
     /**
      * @return the topic this reader is reading from
      */

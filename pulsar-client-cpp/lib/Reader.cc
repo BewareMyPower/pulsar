@@ -29,7 +29,11 @@ static const std::string EMPTY_STRING;
 
 Reader::Reader() : impl_() {}
 
-Reader::Reader(ReaderImplPtr impl) : impl_(impl) {}
+Reader::Reader(ReaderImplPtr impl) : impl_(impl) {
+    std::cout << "Reader ctor refcnt: " << impl_.use_count() << std::endl;
+}
+
+Reader::~Reader() { std::cout << "Reader dtor refcnt: " << impl_.use_count() << std::endl; }
 
 const std::string& Reader::getTopic() const { return impl_ != NULL ? impl_->getTopic() : EMPTY_STRING; }
 
