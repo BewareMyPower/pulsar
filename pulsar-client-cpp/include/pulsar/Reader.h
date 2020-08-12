@@ -40,6 +40,9 @@ class PULSAR_PUBLIC Reader {
      */
     Reader();
 
+    typedef std::shared_ptr<ReaderImpl> ReaderImplPtr;
+    explicit Reader(ReaderImplPtr);
+
     ~Reader();
 
     /**
@@ -125,9 +128,7 @@ class PULSAR_PUBLIC Reader {
     void seekAsync(uint64_t timestamp, ResultCallback callback);
 
    private:
-    typedef std::shared_ptr<ReaderImpl> ReaderImplPtr;
     ReaderImplPtr impl_;
-    explicit Reader(ReaderImplPtr);
 
     friend class PulsarFriend;
     friend class PulsarWrapper;

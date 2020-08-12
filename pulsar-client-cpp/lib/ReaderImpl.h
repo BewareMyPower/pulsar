@@ -12,10 +12,11 @@ typedef std::weak_ptr<ReaderImpl> ReaderImplWeakPtr;
 
 class ReaderImpl : public std::enable_shared_from_this<ReaderImpl> {
    public:
-    ReaderImpl(const std::string& topic, const ReaderConfiguration& conf,
-               ReaderCallback readerCreatedCallback);
+    ReaderImpl(ReaderCallback callback) : callback_(callback) {}
 
-    void start(const MessageId& startMessageId);
+    void start(const MessageId& startMessageId) {
+        callback_(ResultOk, Reader(shared_from_this()));
+    }
 
     const std::string& getTopic() const {
         static std::string res = "";
@@ -34,11 +35,7 @@ class ReaderImpl : public std::enable_shared_from_this<ReaderImpl> {
     void seekAsync(uint64_t timestamp, ResultCallback callback) {}
 
    private:
-    std::string topic_;
-    ReaderConfiguration readerConf_;
-    ConsumerImplPtr consumer_;
-    ReaderCallback readerCreatedCallback_;
-    ReaderListener readerListener_;
+    ReaderCallback callback_;
 };
 }  // namespace pulsar
 
