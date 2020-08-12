@@ -106,11 +106,6 @@ if (LINK_STATIC)
     else()
         # Build a list of the requird .a libs (except ssl) to merge
         SET(STATIC_LIBS "")
-        foreach (LIB IN LISTS COMMON_LIBS)
-            if (${LIB} MATCHES ".+\\.a$" AND NOT ${LIB} MATCHES ${OPENSSL_SSL_LIBRARY} AND NOT ${LIB} MATCHES ${OPENSSL_CRYPTO_LIBRARY})
-                set(STATIC_LIBS "${STATIC_LIBS} ${LIB}")
-            endif()
-        endforeach()
 
         add_custom_target(pulsarStaticWithDeps
                 ALL

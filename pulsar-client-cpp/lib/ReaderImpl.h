@@ -12,7 +12,7 @@ typedef std::weak_ptr<ReaderImpl> ReaderImplWeakPtr;
 
 class ReaderImpl : public std::enable_shared_from_this<ReaderImpl> {
    public:
-    ReaderImpl(const ClientImplPtr client, const std::string& topic, const ReaderConfiguration& conf,
+    ReaderImpl(const std::string& topic, const ReaderConfiguration& conf,
                ReaderCallback readerCreatedCallback);
 
     void start(const MessageId& startMessageId);
@@ -35,7 +35,6 @@ class ReaderImpl : public std::enable_shared_from_this<ReaderImpl> {
 
    private:
     std::string topic_;
-    ClientImplWeakPtr client_;
     ReaderConfiguration readerConf_;
     ConsumerImplPtr consumer_;
     ReaderCallback readerCreatedCallback_;

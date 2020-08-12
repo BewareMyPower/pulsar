@@ -195,8 +195,6 @@ if (APPLE)
     set(OPENSSL_ROOT_DIR /usr/local/opt/openssl/)
 endif ()
 
-find_package(OpenSSL REQUIRED)
-
 if (BUILD_TESTS)
     find_path(GTEST_INCLUDE_PATH gtest/gtest.h)
     find_path(GMOCK_INCLUDE_PATH gmock/gmock.h)

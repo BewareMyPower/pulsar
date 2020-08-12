@@ -224,8 +224,7 @@ void ClientImpl::handleReaderMetadataLookup(const Result result, const LookupDat
         return;
     }
 
-    ReaderImplPtr reader =
-        std::make_shared<ReaderImpl>(shared_from_this(), topicName->toString(), conf, callback);
+    ReaderImplPtr reader = std::make_shared<ReaderImpl>(topicName->toString(), conf, callback);
     reader->start(startMessageId);
 }
 
