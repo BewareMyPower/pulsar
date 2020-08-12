@@ -248,46 +248,4 @@ Result Consumer::seek(uint64_t timestamp) {
     return result;
 }
 
-Result Consumer::subscribeOneTopic(const std::string& topic) {
-    if (!impl_) {
-        return ResultConsumerNotInitialized;
-    }
-
-    Promise<bool, Result> promise;
-    impl_->subscribeOneTopicAsync(topic, WaitForCallback(promise));
-    Result result;
-    promise.getFuture().get(result);
-    return result;
-}
-
-void Consumer::subscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
-    if (!impl_) {
-        callback(ResultConsumerNotInitialized);
-        return;
-    }
-
-    impl_->subscribeOneTopicAsync(topic, callback);
-}
-
-Result Consumer::unsubscribeOneTopic(const std::string& topic) {
-    if (!impl_) {
-        return ResultConsumerNotInitialized;
-    }
-
-    Promise<bool, Result> promise;
-    impl_->unsubscribeOneTopicAsync(topic, WaitForCallback(promise));
-    Result result;
-    promise.getFuture().get(result);
-    return result;
-}
-
-void Consumer::unsubscribeOneTopicAsync(const std::string& topic, ResultCallback callback) {
-    if (!impl_) {
-        callback(ResultConsumerNotInitialized);
-        return;
-    }
-
-    impl_->unsubscribeOneTopicAsync(topic, callback);
-}
-
 }  // namespace pulsar

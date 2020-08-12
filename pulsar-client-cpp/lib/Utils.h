@@ -40,7 +40,20 @@ template <typename T>
 struct WaitForCallbackValue {
     Promise<Result, T> m_promise;
 
-    WaitForCallbackValue(Promise<Result, T> promise) : m_promise(promise) {}
+    WaitForCallbackValue(Promise<Result, T> promise) : m_promise(promise) {
+        static int i = 0;
+        std::cout << (void*)this << " | WaitForCallbackValue ctor: " << ++i << std::endl;
+    }
+
+    WaitForCallbackValue(const WaitForCallbackValue<T>& rhs) : m_promise(rhs.m_promise) {
+        static int i = 0;
+        std::cout << (void*)this << " | WaitForCallbackValue copy ctor: " << ++i << std::endl;
+    }
+
+    ~WaitForCallbackValue() {
+        static int i = 0;
+        std::cout << (void*)this << " | WaitForCallbackValue dtor: " << ++i << std::endl;
+    }
 
     void operator()(Result result, const T& value) {
         if (result == ResultOk) {

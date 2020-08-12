@@ -224,8 +224,14 @@ void ClientImpl::handleReaderMetadataLookup(const Result result, const LookupDat
         return;
     }
 
-    ReaderImplPtr reader = std::make_shared<ReaderImpl>(callback);
+    LOG_INFO("handleReaderMetadataLookup create reader");
+    ReaderImplPtr reader = std::make_shared<ReaderImpl>(shared_from_this(), topicName->toString(), conf,
+                                                        getListenerExecutorProvider()->get(), callback);
     reader->start(startMessageId);
+
+    Lock lock(mutex_);
+    consumers_.push_back(reader->getConsumer());
+    LOG_INFO("handleReaderMetadataLookup stop");
 }
 
 void ClientImpl::subscribeWithRegexAsync(const std::string& regexPattern, const std::string& consumerName,

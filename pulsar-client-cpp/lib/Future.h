@@ -42,12 +42,20 @@ struct InternalState {
 };
 
 template <typename Result, typename Type>
+using InternalStateSharedPtr = std::shared_ptr<InternalState<Result, Type>>;
+
+template <typename Result, typename Type>
+using InternalStateWeakPtr = std::weak_ptr<InternalState<Result, Type>>;
+
+template <typename Result, typename Type>
 class Future {
    public:
     typedef std::function<void(Result, const Type&)> ListenerCallback;
 
     Future& addListener(ListenerCallback callback) {
-        InternalState<Result, Type>* state = state_.get();
+        auto state = state_.lock();
+        if (!state) return *this;
+
         Lock lock(state->mutex);
 
         if (state->complete) {
@@ -61,7 +69,9 @@ class Future {
     }
 
     Result get(Type& result) {
-        InternalState<Result, Type>* state = state_.get();
+        auto state = state_.lock();
+        if (!state) return Result(0);  // Require: a zero value Result should be valid
+
         Lock lock(state->mutex);
 
         if (!state->complete) {
@@ -76,10 +86,9 @@ class Future {
     }
 
    private:
-    typedef std::shared_ptr<InternalState<Result, Type> > InternalStatePtr;
-    Future(InternalStatePtr state) : state_(state) {}
+    Future(const InternalStateSharedPtr<Result, Type>& state) : state_(state) {}
 
-    std::shared_ptr<InternalState<Result, Type> > state_;
+    InternalStateWeakPtr<Result, Type> state_;
 
     template <typename U, typename V>
     friend class Promise;
@@ -145,7 +154,7 @@ class Promise {
 
    private:
     typedef std::function<void(Result, const Type&)> ListenerCallback;
-    std::shared_ptr<InternalState<Result, Type> > state_;
+    InternalStateSharedPtr<Result, Type> state_;
 };
 
 class Void {};

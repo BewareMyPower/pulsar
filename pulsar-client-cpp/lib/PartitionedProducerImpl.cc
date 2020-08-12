@@ -30,6 +30,8 @@ DECLARE_LOG_OBJECT()
 
 namespace pulsar {
 
+const std::string PartitionedProducerImpl::PARTITION_NAME_SUFFIX = "-partition-";
+
 PartitionedProducerImpl::PartitionedProducerImpl(ClientImplPtr client, const TopicNamePtr topicName,
                                                  const unsigned int numPartitions,
                                                  const ProducerConfiguration& config)

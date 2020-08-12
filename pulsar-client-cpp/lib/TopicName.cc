@@ -37,7 +37,6 @@ namespace pulsar {
 
 const std::string TopicDomain::Persistent = "persistent";
 const std::string TopicDomain::NonPersistent = "non-persistent";
-const std::string TopicName::PARTITION_NAME_SUFFIX = "-partition-";
 
 typedef std::unique_lock<std::mutex> Lock;
 // static members
@@ -91,8 +90,6 @@ bool TopicName::init(const std::string& topicName) {
     } else {
         namespaceName_ = NamespaceName::get(property_, cluster_, namespacePortion_);
     }
-
-    partitionIndex_ = TopicName::getPartitionIndex(topicName_);
     return true;
 }
 bool TopicName::parse(const std::string& topicName, std::string& domain, std::string& property,
@@ -236,38 +233,10 @@ bool TopicName::isPersistent() const { return this->domain_ == TopicDomain::Pers
 const std::string TopicName::getTopicPartitionName(unsigned int partition) {
     std::stringstream topicPartitionName;
     // make this topic name as well
-    topicPartitionName << toString() << PARTITION_NAME_SUFFIX << partition;
+    topicPartitionName << toString() << PartitionedProducerImpl::PARTITION_NAME_SUFFIX << partition;
     return topicPartitionName.str();
 }
 
 NamespaceNamePtr TopicName::getNamespaceName() { return namespaceName_; }
-
-int TopicName::getPartitionIndex(const std::string& topic) {
-    size_t pos = topic.rfind(PARTITION_NAME_SUFFIX);
-    if (pos == std::string::npos) {
-        return -1;
-    }
-    try {
-        std::string partitionStr = topic.substr(pos + PARTITION_NAME_SUFFIX.length());
-        int partition = std::stoi(partitionStr);
-        if (std::to_string(partition) == partitionStr) {
-            return partition;
-        } else {  // eg. "0001", "1xxx", "   1"
-            return -2;
-        }
-    } catch (const std::invalid_argument&) {  // eg. "xxxx"
-        return -3;
-    } catch (const std::out_of_range&) {  // eg. "9999999999"
-        return -4;
-    }
-}
-
-std::string TopicName::getPartitionedTopicName() const {
-    if (isPartitioned()) {
-        return topicName_.substr(0, topicName_.rfind(PARTITION_NAME_SUFFIX));
-    } else {
-        return topicName_;
-    }
-}
 
 }  // namespace pulsar

@@ -141,6 +141,13 @@ Result Client::createReader(const std::string& topic, const MessageId& startMess
                             const ReaderConfiguration& conf, Reader& reader) {
     Promise<Result, Reader> promise;
     createReaderAsync(topic, startMessageId, conf, WaitForCallbackValue<Reader>(promise));
+    //createReaderAsync(topic, startMessageId, conf, [&promise](Result result, Reader reader) {
+    //    if (result == ResultOk) {
+    //        promise.setValue(reader);
+    //    } else {
+    //        promise.setFailed(result);
+    //    }
+    //});
     Future<Result, Reader> future = promise.getFuture();
 
     return future.get(reader);

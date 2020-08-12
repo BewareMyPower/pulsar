@@ -408,6 +408,7 @@ void ClientConnection::handleHandshake(const boost::system::error_code& err) {
     // Send CONNECT command to broker
     asyncWrite(buffer.const_asio_buffer(), std::bind(&ClientConnection::handleSentPulsarConnect,
                                                      shared_from_this(), std::placeholders::_1, buffer));
+    LOG_INFO("[XYZ] DEBUG handleHandshake");
 }
 
 void ClientConnection::handleSentPulsarConnect(const boost::system::error_code& err,
