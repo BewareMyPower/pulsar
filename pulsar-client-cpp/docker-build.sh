@@ -40,6 +40,7 @@ PYTHON_INCLUDE_DIR="\$(python3 -c \"from distutils.sysconfig import get_python_i
 PYTHON_LIBRARY="\$(python3 -c \"import distutils.sysconfig as sysconfig; print(sysconfig.get_config_var('LIBDIR'))\")"
 CMAKE_ARGS="-DPYTHON_INCLUDE_DIR=\"$PYTHON_INCLUDE_DIR\" -DPYTHON_LIBRARY=\"$PYTHON_LIBRARY\" $CMAKE_ARGS"
 COMMAND="cd /pulsar/pulsar-client-cpp \\
+ && apt update \\
  && apt install -y python3-dev \\
  && cmake . $CMAKE_ARGS \\
  && make check-format \\
