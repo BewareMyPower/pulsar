@@ -140,19 +140,17 @@ LookupServicePtr ClientImpl::getLookup() { return lookupServicePtr_; }
 
 void ClientImpl::createProducerAsync(const std::string& topic, ProducerConfiguration conf,
                                      CreateProducerCallback callback) {
-    TopicNamePtr topicName;
-    {
-        Lock lock(mutex_);
-        if (state_ != Open) {
-            lock.unlock();
-            callback(ResultAlreadyClosed, Producer());
-            return;
-        } else if (!(topicName = TopicName::get(topic))) {
-            lock.unlock();
-            callback(ResultInvalidTopicName, Producer());
-            return;
-        }
+    if (state_ != Open) {
+        callback(ResultAlreadyClosed, {});
+        return;
     }
+
+    TopicNamePtr topicName = TopicName::get(topic);
+    if (!topicName) {
+        callback(ResultInvalidTopicName, {});
+        return;
+    }
+
     lookupServicePtr_->getPartitionMetadataAsync(topicName).addListener(
         std::bind(&ClientImpl::handleCreateProducer, shared_from_this(), std::placeholders::_1,
                   std::placeholders::_2, topicName, conf, callback));
@@ -190,18 +188,15 @@ void ClientImpl::handleProducerCreated(Result result, ProducerImplBaseWeakPtr pr
 
 void ClientImpl::createReaderAsync(const std::string& topic, const MessageId& startMessageId,
                                    const ReaderConfiguration& conf, ReaderCallback callback) {
-    TopicNamePtr topicName;
-    {
-        Lock lock(mutex_);
-        if (state_ != Open) {
-            lock.unlock();
-            callback(ResultAlreadyClosed, Reader());
-            return;
-        } else if (!(topicName = TopicName::get(topic))) {
-            lock.unlock();
-            callback(ResultInvalidTopicName, Reader());
-            return;
-        }
+    if (state_ != Open) {
+        callback(ResultAlreadyClosed, {});
+        return;
+    }
+
+    TopicNamePtr topicName = TopicName::get(topic);
+    if (!topicName) {
+        callback(ResultInvalidTopicName, {});
+        return;
     }
 
     MessageId msgId(startMessageId);
@@ -236,20 +231,16 @@ void ClientImpl::handleReaderMetadataLookup(const Result result, const LookupDat
 
 void ClientImpl::subscribeWithRegexAsync(const std::string& regexPattern, const std::string& subscriptionName,
                                          const ConsumerConfiguration& conf, SubscribeCallback callback) {
-    TopicNamePtr topicNamePtr = TopicName::get(regexPattern);
-
-    Lock lock(mutex_);
     if (state_ != Open) {
-        lock.unlock();
-        callback(ResultAlreadyClosed, Consumer());
+        callback(ResultAlreadyClosed, {});
         return;
-    } else {
-        lock.unlock();
-        if (!topicNamePtr) {
-            LOG_ERROR("Topic pattern not valid: " << regexPattern);
-            callback(ResultInvalidTopicName, Consumer());
-            return;
-        }
+    }
+
+    TopicNamePtr topicNamePtr = TopicName::get(regexPattern);
+    if (!topicNamePtr) {
+        LOG_ERROR("Topic pattern not valid: " << regexPattern);
+        callback(ResultInvalidTopicName, {});
+        return;
     }
 
     NamespaceNamePtr nsName = topicNamePtr->getNamespaceName();
@@ -290,19 +281,15 @@ void ClientImpl::createPatternMultiTopicsConsumer(const Result result, const Nam
 
 void ClientImpl::subscribeAsync(const std::vector<std::string>& topics, const std::string& subscriptionName,
                                 const ConsumerConfiguration& conf, SubscribeCallback callback) {
-    TopicNamePtr topicNamePtr;
-
-    Lock lock(mutex_);
     if (state_ != Open) {
-        lock.unlock();
-        callback(ResultAlreadyClosed, Consumer());
+        callback(ResultAlreadyClosed, {});
         return;
-    } else {
-        if (!topics.empty() && !(topicNamePtr = MultiTopicsConsumerImpl::topicNamesValid(topics))) {
-            lock.unlock();
-            callback(ResultInvalidTopicName, Consumer());
-            return;
-        }
+    }
+
+    TopicNamePtr topicNamePtr;
+    if (!topics.empty() && !(topicNamePtr = MultiTopicsConsumerImpl::topicNamesValid(topics))) {
+        callback(ResultInvalidTopicName, {});
+        return;
     }
 
     if (topicNamePtr) {
@@ -318,6 +305,7 @@ void ClientImpl::subscribeAsync(const std::vector<std::string>& topics, const st
     consumer->getConsumerCreatedFuture().addListener(std::bind(&ClientImpl::handleConsumerCreated,
                                                                shared_from_this(), std::placeholders::_1,
                                                                std::placeholders::_2, callback, consumer));
+    Lock lock(mutex_);
     consumers_.push_back(consumer);
     lock.unlock();
     consumer->start();
@@ -325,24 +313,22 @@ void ClientImpl::subscribeAsync(const std::vector<std::string>& topics, const st
 
 void ClientImpl::subscribeAsync(const std::string& topic, const std::string& subscriptionName,
                                 const ConsumerConfiguration& conf, SubscribeCallback callback) {
-    TopicNamePtr topicName;
-    {
-        Lock lock(mutex_);
-        if (state_ != Open) {
-            lock.unlock();
-            callback(ResultAlreadyClosed, Consumer());
-            return;
-        } else if (!(topicName = TopicName::get(topic))) {
-            lock.unlock();
-            callback(ResultInvalidTopicName, Consumer());
-            return;
-        } else if (conf.isReadCompacted() && (topicName->getDomain().compare("persistent") != 0 ||
-                                              (conf.getConsumerType() != ConsumerExclusive &&
-                                               conf.getConsumerType() != ConsumerFailover))) {
-            lock.unlock();
-            callback(ResultInvalidConfiguration, Consumer());
-            return;
-        }
+    if (state_ != Open) {
+        callback(ResultAlreadyClosed, {});
+        return;
+    }
+
+    TopicNamePtr topicName = TopicName::get(topic);
+    if (!topicName) {
+        callback(ResultInvalidTopicName, {});
+        return;
+    }
+
+    if (conf.isReadCompacted() &&
+        (topicName->getDomain().compare("persistent") != 0 ||
+         (conf.getConsumerType() != ConsumerExclusive && conf.getConsumerType() != ConsumerFailover))) {
+        callback(ResultInvalidConfiguration, {});
+        return;
     }
 
     lookupServicePtr_->getPartitionMetadataAsync(topicName).addListener(
@@ -448,36 +434,32 @@ void ClientImpl::handleGetPartitions(const Result result, const LookupDataResult
 }
 
 void ClientImpl::getPartitionsForTopicAsync(const std::string& topic, GetPartitionsCallback callback) {
-    TopicNamePtr topicName;
-    {
-        Lock lock(mutex_);
-        if (state_ != Open) {
-            lock.unlock();
-            callback(ResultAlreadyClosed, StringList());
-            return;
-        } else if (!(topicName = TopicName::get(topic))) {
-            lock.unlock();
-            callback(ResultInvalidTopicName, StringList());
-            return;
-        }
+    if (state_ != Open) {
+        callback(ResultAlreadyClosed, {});
+        return;
     }
+
+    TopicNamePtr topicName = TopicName::get(topic);
+    if (!topicName) {
+        callback(ResultInvalidTopicName, {});
+        return;
+    }
+
     lookupServicePtr_->getPartitionMetadataAsync(topicName).addListener(
         std::bind(&ClientImpl::handleGetPartitions, shared_from_this(), std::placeholders::_1,
                   std::placeholders::_2, topicName, callback));
 }
 
 void ClientImpl::closeAsync(CloseCallback callback) {
-    Lock lock(mutex_);
-    ProducersList producers(producers_);
-    ConsumersList consumers(consumers_);
-
-    if (state_ != Open && callback) {
-        lock.unlock();
+    State expectedState = Open;
+    if (!state_.compare_exchange_strong(expectedState, Closing)) {
         callback(ResultAlreadyClosed);
         return;
     }
-    // Set the state to Closing so that no producers could get added
-    state_ = Closing;
+
+    Lock lock(mutex_);
+    ProducersList producers(producers_);
+    ConsumersList consumers(consumers_);
     lock.unlock();
 
     LOG_INFO("Closing Pulsar client");

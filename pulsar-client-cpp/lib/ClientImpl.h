@@ -130,7 +130,7 @@ class ClientImpl : public std::enable_shared_from_this<ClientImpl> {
 
     std::mutex mutex_;
 
-    State state_;
+    std::atomic<State> state_;
     std::string serviceUrl_;
     ClientConfiguration clientConfiguration_;
     MemoryLimitController memoryLimitController_;
