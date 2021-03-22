@@ -21,6 +21,7 @@
 #include "Backoff.h"
 #include "ClientImpl.h"
 #include "ClientConnection.h"
+#include <atomic>
 #include <memory>
 #include <boost/asio.hpp>
 #include <string>
@@ -103,11 +104,15 @@ class HandlerBase {
         Failed
     };
 
-    State state_;
+    // thread-safe access methods to `state_`
+    State getState() const noexcept { return state_; }
+    void setState(State state) noexcept { state_ = state; }
+
     Backoff backoff_;
     uint64_t epoch_;
 
    private:
+    std::atomic<State> state_;
     DeadlineTimerPtr timer_;
     friend class ClientConnection;
     friend class PulsarFriend;

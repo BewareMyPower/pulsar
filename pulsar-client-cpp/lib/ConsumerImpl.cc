@@ -110,7 +110,7 @@ ConsumerImpl::ConsumerImpl(const ClientImplPtr client, const std::string& topic,
 ConsumerImpl::~ConsumerImpl() {
     LOG_DEBUG(getName() << "~ConsumerImpl");
     incomingMessages_.clear();
-    if (state_ == Ready) {
+    if (getState() == Ready) {
         // this could happen at least in this condition:
         //      consumer seek, caused reconnection, if consumer close happened before connection ready,
         //      then consumer will not send closeConsumer to Broker side, and caused a leak of consumer in
@@ -163,7 +163,7 @@ void ConsumerImpl::start() {
 
 void ConsumerImpl::connectionOpened(const ClientConnectionPtr& cnx) {
     Lock lock(mutex_);
-    if (state_ == Closed) {
+    if (getState() == Closed) {
         lock.unlock();
         LOG_DEBUG(getName() << "connectionOpened : Consumer is already closed");
         return;
@@ -198,7 +198,7 @@ void ConsumerImpl::connectionFailed(Result result) {
 
     if (consumerCreatedPromise_.setFailed(result)) {
         Lock lock(mutex_);
-        state_ = Failed;
+        setState(Failed);
     }
 }
 
@@ -219,7 +219,7 @@ void ConsumerImpl::handleCreateConsumer(const ClientConnectionPtr& cnx, Result r
             connection_ = cnx;
             incomingMessages_.clear();
             cnx->registerConsumer(consumerId_, shared_from_this());
-            state_ = Ready;
+            setState(Ready);
             backoff_.reset();
             // Complicated logic since we don't have a isLocked() function for mutex
             if (waitingForZeroQueueSizeMessage) {
@@ -258,7 +258,7 @@ void ConsumerImpl::handleCreateConsumer(const ClientConnectionPtr& cnx, Result r
             } else {
                 LOG_ERROR(getName() << "Failed to create consumer: " << strResult(result));
                 consumerCreatedPromise_.setFailed(result);
-                state_ = Failed;
+                setState(Failed);
             }
         }
     }
@@ -268,7 +268,7 @@ void ConsumerImpl::unsubscribeAsync(ResultCallback callback) {
     LOG_INFO(getName() << "Unsubscribing");
 
     Lock lock(mutex_);
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         lock.unlock();
         callback(ResultAlreadyClosed);
         LOG_ERROR(getName() << "Can not unsubscribe a closed subscription, please call subscribe again and "
@@ -297,7 +297,7 @@ void ConsumerImpl::unsubscribeAsync(ResultCallback callback) {
 void ConsumerImpl::handleUnsubscribe(Result result, ResultCallback callback) {
     if (result == ResultOk) {
         Lock lock(mutex_);
-        state_ = Closed;
+        setState(Closed);
         LOG_INFO(getName() << "Unsubscribed successfully");
     } else {
         LOG_WARN(getName() << "Failed to unsubscribe: " << strResult(result));
@@ -629,7 +629,7 @@ void ConsumerImpl::receiveAsync(ReceiveCallback& callback) {
 
     // fail the callback if consumer is closing or closed
     Lock stateLock(mutex_);
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         callback(ResultAlreadyClosed, msg);
         return;
     }
@@ -657,7 +657,7 @@ void ConsumerImpl::receiveAsync(ReceiveCallback& callback) {
 Result ConsumerImpl::receiveHelper(Message& msg) {
     {
         Lock lock(mutex_);
-        if (state_ != Ready) {
+        if (getState() != Ready) {
             return ResultAlreadyClosed;
         }
     }
@@ -689,7 +689,7 @@ Result ConsumerImpl::receiveHelper(Message& msg, int timeout) {
 
     {
         Lock lock(mutex_);
-        if (state_ != Ready) {
+        if (getState() != Ready) {
             return ResultAlreadyClosed;
         }
     }
@@ -873,7 +873,7 @@ void ConsumerImpl::closeAsync(ResultCallback callback) {
     // Keep a reference to ensure object is kept alive
     ConsumerImplPtr ptr = shared_from_this();
 
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         lock.unlock();
         if (callback) {
             callback(ResultAlreadyClosed);
@@ -882,7 +882,7 @@ void ConsumerImpl::closeAsync(ResultCallback callback) {
     }
 
     LOG_INFO(getName() << "Closing consumer for topic " << topic_);
-    state_ = Closing;
+    setState(Closing);
 
     // Flush pending grouped ACK requests.
     if (ackGroupingTrackerPtr_) {
@@ -891,7 +891,7 @@ void ConsumerImpl::closeAsync(ResultCallback callback) {
 
     ClientConnectionPtr cnx = getCnx().lock();
     if (!cnx) {
-        state_ = Closed;
+        setState(Closed);
         lock.unlock();
         // If connection is gone, also the consumer is closed on the broker side
         if (callback) {
@@ -902,7 +902,7 @@ void ConsumerImpl::closeAsync(ResultCallback callback) {
 
     ClientImplPtr client = client_.lock();
     if (!client) {
-        state_ = Closed;
+        setState(Closed);
         lock.unlock();
         // Client was already destroyed
         if (callback) {
@@ -929,7 +929,7 @@ void ConsumerImpl::closeAsync(ResultCallback callback) {
 void ConsumerImpl::handleClose(Result result, ResultCallback callback, ConsumerImplPtr consumer) {
     if (result == ResultOk) {
         Lock lock(mutex_);
-        state_ = Closed;
+        setState(Closed);
         lock.unlock();
 
         ClientConnectionPtr cnx = getCnx().lock();
@@ -951,21 +951,15 @@ const std::string& ConsumerImpl::getName() const { return consumerStr_; }
 
 void ConsumerImpl::shutdown() {
     Lock lock(mutex_);
-    state_ = Closed;
+    setState(Closed);
     lock.unlock();
 
     consumerCreatedPromise_.setFailed(ResultAlreadyClosed);
 }
 
-bool ConsumerImpl::isClosed() {
-    Lock lock(mutex_);
-    return state_ == Closed;
-}
+bool ConsumerImpl::isClosed() { return getState() == Closed; }
 
-bool ConsumerImpl::isOpen() {
-    Lock lock(mutex_);
-    return state_ == Ready;
-}
+bool ConsumerImpl::isOpen() { return getState() == Ready; }
 
 Result ConsumerImpl::pauseMessageListener() {
     if (!messageListener_) {
@@ -1030,7 +1024,7 @@ int ConsumerImpl::getNumOfPrefetchedMessages() const { return incomingMessages_.
 
 void ConsumerImpl::getBrokerConsumerStatsAsync(BrokerConsumerStatsCallback callback) {
     Lock lock(mutex_);
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         LOG_ERROR(getName() << "Client connection is not open, please try again later.")
         lock.unlock();
         callback(ResultConsumerNotInitialized, BrokerConsumerStats());
@@ -1094,7 +1088,7 @@ void ConsumerImpl::handleSeek(Result result, ResultCallback callback) {
 
 void ConsumerImpl::seekAsync(const MessageId& msgId, ResultCallback callback) {
     Lock lock(mutex_);
-    if (state_ == Closed || state_ == Closing) {
+    if (getState() == Closed || getState() == Closing) {
         lock.unlock();
         LOG_ERROR(getName() << "Client connection already closed.");
         if (callback) {
@@ -1127,7 +1121,7 @@ void ConsumerImpl::seekAsync(const MessageId& msgId, ResultCallback callback) {
 
 void ConsumerImpl::seekAsync(uint64_t timestamp, ResultCallback callback) {
     Lock lock(mutex_);
-    if (state_ == Closed || state_ == Closing) {
+    if (getState() == Closed || getState() == Closing) {
         lock.unlock();
         LOG_ERROR(getName() << "Client connection already closed.");
         if (callback) {
@@ -1195,7 +1189,7 @@ void ConsumerImpl::brokerGetLastMessageIdListener(Result res, MessageId messageI
 
 void ConsumerImpl::getLastMessageIdAsync(BrokerGetLastMessageIdCallback callback) {
     Lock lock(mutex_);
-    if (state_ == Closed || state_ == Closing) {
+    if (getState() == Closed || getState() == Closing) {
         lock.unlock();
         LOG_ERROR(getName() << "Client connection already closed.");
         if (callback) {

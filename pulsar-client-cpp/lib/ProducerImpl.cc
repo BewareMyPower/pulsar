@@ -110,7 +110,7 @@ ProducerImpl::~ProducerImpl() {
     LOG_DEBUG(getName() << "~ProducerImpl");
     cancelTimers();
     printStats();
-    if (state_ == Ready) {
+    if (getState() == Ready) {
         LOG_WARN(getName() << "Destroyed producer which was not properly closed");
     }
 }
@@ -138,7 +138,7 @@ void ProducerImpl::refreshEncryptionKey(const boost::system::error_code& ec) {
 
 void ProducerImpl::connectionOpened(const ClientConnectionPtr& cnx) {
     Lock lock(mutex_);
-    if (state_ == Closed) {
+    if (getState() == Closed) {
         lock.unlock();
         LOG_DEBUG(getName() << "connectionOpened : Producer is already closed");
         return;
@@ -162,7 +162,7 @@ void ProducerImpl::connectionFailed(Result result) {
 
     if (producerCreatedPromise_.setFailed(result)) {
         Lock lock(mutex_);
-        state_ = Failed;
+        setState(Failed);
     }
 }
 
@@ -187,7 +187,7 @@ void ProducerImpl::handleCreateProducer(const ClientConnectionPtr& cnx, Result r
         }
         resendMessages(cnx);
         connection_ = cnx;
-        state_ = Ready;
+        setState(Ready);
         backoff_.reset();
         lock.unlock();
 
@@ -240,7 +240,7 @@ void ProducerImpl::handleCreateProducer(const ClientConnectionPtr& cnx, Result r
                 LOG_ERROR(getName() << "Failed to create producer: " << strResult(result));
                 producerCreatedPromise_.setFailed(result);
                 Lock lock(mutex_);
-                state_ = Failed;
+                setState(Failed);
             }
         }
     }
@@ -387,7 +387,7 @@ void ProducerImpl::sendAsync(const Message& msg, SendCallback callback) {
     }
 
     Lock lock(mutex_);
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         lock.unlock();
         releaseSemaphore(payloadSize);
         cb(ResultAlreadyClosed, msg.getMessageId());
@@ -571,7 +571,7 @@ void ProducerImpl::closeAsync(CloseCallback callback) {
 
     cancelTimers();
 
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         lock.unlock();
         if (callback) {
             callback(ResultAlreadyClosed);
@@ -579,11 +579,11 @@ void ProducerImpl::closeAsync(CloseCallback callback) {
         return;
     }
     LOG_INFO(getName() << "Closing producer for topic " << topic_);
-    state_ = Closing;
+    setState(Closing);
 
     ClientConnectionPtr cnx = getCnx().lock();
     if (!cnx) {
-        state_ = Closed;
+        setState(Closed);
         lock.unlock();
         if (callback) {
             callback(ResultOk);
@@ -597,7 +597,7 @@ void ProducerImpl::closeAsync(CloseCallback callback) {
 
     ClientImplPtr client = client_.lock();
     if (!client) {
-        state_ = Closed;
+        setState(Closed);
         lock.unlock();
         // Client was already destroyed
         if (callback) {
@@ -620,7 +620,7 @@ void ProducerImpl::closeAsync(CloseCallback callback) {
 void ProducerImpl::handleClose(Result result, ResultCallback callback, ProducerImplPtr producer) {
     if (result == ResultOk) {
         Lock lock(mutex_);
-        state_ = Closed;
+        setState(Closed);
         LOG_INFO(getName() << "Closed producer");
         ClientConnectionPtr cnx = getCnx().lock();
         if (cnx) {
@@ -642,7 +642,7 @@ uint64_t ProducerImpl::getProducerId() const { return producerId_; }
 
 void ProducerImpl::handleSendTimeout(const boost::system::error_code& err) {
     Lock lock(mutex_);
-    if (state_ != Ready) {
+    if (getState() != Ready) {
         return;
     }
 
@@ -790,7 +790,7 @@ void ProducerImpl::start() { HandlerBase::start(); }
 
 void ProducerImpl::shutdown() {
     Lock lock(mutex_);
-    state_ = Closed;
+    setState(Closed);
     cancelTimers();
     producerCreatedPromise_.setFailed(ResultAlreadyClosed);
 }
@@ -816,10 +816,7 @@ bool ProducerImplCmp::operator()(const ProducerImplPtr& a, const ProducerImplPtr
     return a->getProducerId() < b->getProducerId();
 }
 
-bool ProducerImpl::isClosed() {
-    Lock lock(mutex_);
-    return state_ == Closed;
-}
+bool ProducerImpl::isClosed() { return getState() == Closed; }
 
 }  // namespace pulsar
 /* namespace pulsar */
