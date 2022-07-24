@@ -384,8 +384,8 @@ void ClientImpl::handleSubscribe(const Result result, const LookupDataResultPtr 
             consumer = std::make_shared<PartitionedConsumerImpl>(
                 shared_from_this(), subscriptionName, topicName, partitionMetadata->getPartitions(), conf);
         } else {
-            auto consumerImpl = std::make_shared<ConsumerImpl>(shared_from_this(), topicName->toString(),
-                                                               subscriptionName, conf);
+            auto consumerImpl = std::make_shared<ConsumerImpl>(
+                shared_from_this(), topicName->toString(), subscriptionName, conf, topicName->isPersistent());
             consumerImpl->setPartitionIndex(topicName->getPartitionIndex());
             consumer = consumerImpl;
         }

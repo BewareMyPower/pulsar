@@ -68,7 +68,7 @@ class ConsumerImpl : public ConsumerImplBase,
                      public std::enable_shared_from_this<ConsumerImpl> {
    public:
     ConsumerImpl(const ClientImplPtr client, const std::string& topic, const std::string& subscriptionName,
-                 const ConsumerConfiguration&,
+                 const ConsumerConfiguration&, bool isPersistent,
                  const ExecutorServicePtr listenerExecutor = ExecutorServicePtr(), bool hasParent = false,
                  const ConsumerTopicType consumerTopicType = NonPartitioned,
                  Commands::SubscriptionMode = Commands::SubscriptionModeDurable,
@@ -183,11 +183,13 @@ class ConsumerImpl : public ConsumerImplBase,
     void trackMessage(const MessageId& messageId);
 
     Optional<MessageId> clearReceiveQueue();
+    Optional<MessageId> getStartMessageId() const;
 
     std::mutex mutexForReceiveWithZeroQueueSize;
     const ConsumerConfiguration config_;
     const std::string subscription_;
     std::string originalSubscriptionName_;
+    const bool isPersistent_;
     MessageListener messageListener_;
     ConsumerEventListenerPtr eventListener_;
     ExecutorServicePtr listenerExecutor_;

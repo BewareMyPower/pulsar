@@ -38,6 +38,7 @@ DECLARE_LOG_OBJECT()
 
 ConsumerImpl::ConsumerImpl(const ClientImplPtr client, const std::string& topic,
                            const std::string& subscriptionName, const ConsumerConfiguration& conf,
+                           bool isPersistent,
                            const ExecutorServicePtr listenerExecutor /* = NULL by default */,
                            bool hasParent /* = false by default */,
                            const ConsumerTopicType consumerTopicType /* = NonPartitioned by default */,
@@ -47,6 +48,7 @@ ConsumerImpl::ConsumerImpl(const ClientImplPtr client, const std::string& topic,
       config_(conf),
       subscription_(subscriptionName),
       originalSubscriptionName_(subscriptionName),
+      isPersistent_(isPersistent),
       messageListener_(config_.getMessageListener()),
       eventListener_(config_.getConsumerEventListener()),
       hasParent_(hasParent),
@@ -173,13 +175,12 @@ void ConsumerImpl::connectionOpened(const ClientConnectionPtr& cnx) {
     cnx->registerConsumer(consumerId_, shared_from_this());
 
     Lock lockForMessageId(mutexForMessageId_);
-    Optional<MessageId> firstMessageInQueue = clearReceiveQueue();
-    if (subscriptionMode_ == Commands::SubscriptionModeNonDurable) {
-        // Update startMessageId so that we can discard messages after delivery
-        // restarts
-        startMessageId_ = firstMessageInQueue;
-    }
-    const auto startMessageId = startMessageId_;
+    // Update startMessageId so that we can discard messages after delivery restarts
+    startMessageId_ = clearReceiveQueue();
+    LOG_INFO("XYZ clearReceiveQueue returns " << startMessageId_.value());
+    const auto subscribeMessageId = (subscriptionMode_ == Commands::SubscriptionModeNonDurable)
+                                        ? startMessageId_
+                                        : Optional<MessageId>::empty();
     lockForMessageId.unlock();
 
     unAckedMessageTrackerPtr_->clear();
@@ -189,7 +190,7 @@ void ConsumerImpl::connectionOpened(const ClientConnectionPtr& cnx) {
     uint64_t requestId = client->newRequestId();
     SharedBuffer cmd = Commands::newSubscribe(
         topic_, subscription_, consumerId_, requestId, getSubType(), consumerName_, subscriptionMode_,
-        startMessageId, readCompacted_, config_.getProperties(), config_.getSubscriptionProperties(),
+        subscribeMessageId, readCompacted_, config_.getProperties(), config_.getSubscriptionProperties(),
         config_.getSchema(), getInitialPosition(), config_.isReplicateSubscriptionStateEnabled(),
         config_.getKeySharedPolicy(), config_.getPriorityLevel());
     cnx->sendRequestWithId(cmd, requestId)
@@ -402,14 +403,14 @@ void ConsumerImpl::messageReceived(const ClientConnectionPtr& cnx, const proto::
         return;
     }
 
-    const bool isMessageDecryptable =
-        metadata.encryption_keys_size() <= 0 || config_.getCryptoKeyReader().get() ||
+    const bool isMessageUndecryptable =
+        metadata.encryption_keys_size() > 0 && !config_.getCryptoKeyReader().get() &&
         config_.getCryptoFailureAction() == ConsumerCryptoFailureAction::CONSUME;
 
     const bool isChunkedMessage = metadata.num_chunks_from_msg() > 1 &&
                                   config_.getConsumerType() != ConsumerType::ConsumerShared &&
                                   config_.getConsumerType() != ConsumerType::ConsumerKeyShared;
-    if (isMessageDecryptable && !isChunkedMessage) {
+    if (!isMessageUndecryptable && !isChunkedMessage) {
         if (!uncompressMessageIfNeeded(cnx, msg.message_id(), metadata, payload, true)) {
             // Message was discarded on decompression error
             return;
@@ -462,6 +463,18 @@ void ConsumerImpl::messageReceived(const ClientConnectionPtr& cnx, const proto::
             pendingReceives_.pop();
         }
         lock.unlock();
+
+        const auto startMessageId = getStartMessageId();
+        LOG_INFO("XYZ get start message ID: " << startMessageId.value()
+                                              << ", message id: " << m.getMessageId());
+        if (isPersistent_ && startMessageId.is_present() &&
+            m.getMessageId().ledgerId() == startMessageId.value().ledgerId() &&
+            m.getMessageId().entryId() == startMessageId.value().entryId() &&
+            !config_.isStartMessageIdInclusive()) {
+            // TODO: use a proper error code for this case
+            callback(ResultUnknownError, {});
+            return;
+        }
 
         if (asyncReceivedWaiting) {
             listenerExecutor_->postWork(std::bind(&ConsumerImpl::notifyPendingReceivedCallback,
@@ -540,9 +553,7 @@ uint32_t ConsumerImpl::receiveIndividualMessagesFromBatch(const ClientConnection
     batchAcknowledgementTracker_.receivedMessage(batchedMessage);
     LOG_DEBUG("Received Batch messages of size - " << batchSize
                                                    << " -- msgId: " << batchedMessage.getMessageId());
-    Lock lock(mutexForMessageId_);
-    const auto startMessageId = startMessageId_;
-    lock.unlock();
+    const auto startMessageId = getStartMessageId();
 
     int skippedMessages = 0;
 
@@ -559,7 +570,9 @@ uint32_t ConsumerImpl::receiveIndividualMessagesFromBatch(const ClientConnection
             // to the startMessageId
             if (msgId.ledgerId() == startMessageId.value().ledgerId() &&
                 msgId.entryId() == startMessageId.value().entryId() &&
-                msgId.batchIndex() <= startMessageId.value().batchIndex()) {
+                (config_.isStartMessageIdInclusive()
+                     ? msgId.batchIndex() < startMessageId.value().batchIndex()
+                     : msgId.batchIndex() <= startMessageId.value().batchIndex())) {
                 LOG_DEBUG(getName() << "Ignoring message from before the startMessageId"
                                     << msg.getMessageId());
                 ++skippedMessages;
@@ -1384,5 +1397,10 @@ bool ConsumerImpl::isConnected() const {
 }
 
 uint64_t ConsumerImpl::getNumberOfConnectedConsumer() { return isConnected() ? 1 : 0; }
+
+Optional<MessageId> ConsumerImpl::getStartMessageId() const {
+    Lock lock(mutexForMessageId_);
+    return startMessageId_;
+}
 
 } /* namespace pulsar */

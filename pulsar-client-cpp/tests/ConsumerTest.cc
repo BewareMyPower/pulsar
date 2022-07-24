@@ -720,4 +720,55 @@ TEST(ConsumerTest, testIsConnected) {
     ASSERT_FALSE(consumer.isConnected());
 }
 
+class ConsumerSeekTest : public ::testing::TestWithParam<bool> {
+   public:
+    void SetUp() override { producerConf_ = ProducerConfiguration().setBatchingEnabled(GetParam()); }
+
+    void TearDown() override { client_.close(); }
+
+   protected:
+    Client client_{lookupUrl};
+    ProducerConfiguration producerConf_;
+};
+
+TEST_P(ConsumerSeekTest, testSeekForMessageId) {
+    Client client(lookupUrl);
+    const std::string topic = "test-seek-for-message-id-" + std::to_string(time(nullptr));
+
+    Producer producer;
+    ASSERT_EQ(ResultOk, client.createProducer(topic, producerConf_, producer));
+
+    MessageId seekMessageId;
+    for (int i = 0; i < 10; i++) {
+        MessageId id;
+        ASSERT_EQ(ResultOk,
+                  producer.send(MessageBuilder().setContent("msg-" + std::to_string(i)).build(), id));
+        if (i == 3) {
+            seekMessageId = id;
+        }
+    }
+
+    Consumer consumerExclusive;
+    ASSERT_EQ(ResultOk, client.subscribe(topic, "sub-0", consumerExclusive));
+    consumerExclusive.seek(seekMessageId);
+    Message msg0;
+    ASSERT_EQ(ResultOk, consumerExclusive.receive(msg0, 3000));
+
+    Consumer consumerInclusive;
+    ASSERT_EQ(ResultOk,
+              client.subscribe(topic, "sub-1", ConsumerConfiguration().setStartMessageIdInclusive(true),
+                               consumerInclusive));
+    consumerInclusive.seek(seekMessageId);
+    Message msg1;
+    ASSERT_EQ(ResultOk, consumerInclusive.receive(msg1, 3000));
+
+    LOG_INFO("XYZ C0 received " << msg0.getDataAsString() << " from " << msg0.getMessageId());
+    LOG_INFO("XYZ C1 received " << msg1.getDataAsString() << " from " << msg1.getMessageId());
+}
+
+// TODO:
+// libc++abi: terminating with uncaught exception of type std::__1::system_error: unique_lock::lock: already
+// locked: Resource deadlock avoided
+INSTANTIATE_TEST_CASE_P(Pulsar, ConsumerSeekTest, ::testing::Values(true, false));
+
 }  // namespace pulsar
