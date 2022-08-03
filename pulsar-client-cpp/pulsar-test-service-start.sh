@@ -53,10 +53,30 @@ $PULSAR_DIR/bin/pulsar tokens create \
             --secret-key file:///$DATA_DIR/tokens/secret.key \
             > $DATA_DIR/tokens/token.txt
 
-export PULSAR_STANDALONE_CONF=$SRC_DIR/pulsar-client-cpp/test-conf/standalone-ssl.conf
-$PULSAR_DIR/bin/pulsar-daemon start standalone \
-        --no-functions-worker --no-stream-storage \
-        --bookkeeper-dir $DATA_DIR/bookkeeper
+PULSAR_ZK_CONF=$SRC_DIR/pulsar-client-cpp/test-conf/zookeeper.conf \
+  $PULSAR_DIR/bin/pulsar-daemon start zookeeper
+
+$PULSAR_DIR/bin/pulsar initialize-cluster-metadata \
+  --cluster standalone \
+  --metadata-store zk:127.0.0.1:2181/chroot \
+  --configuration-store zk:127.0.0.1:2181/chroot \
+  --web-service-url http://127.0.0.1:8080 \
+  --web-service-url-tls https://127.0.0.1:8443 \
+  --broker-service-url pulsar://127.0.0.1:6650 \
+  --broker-service-url-tls pulsar+ssl://127.0.0.1:6651 >/dev/null
+
+PULSAR_BOOKKEEPER_CONF=$SRC_DIR/pulsar-client-cpp/test-conf/bookkeeper.conf \
+  $PULSAR_DIR/bin/pulsar-daemon start bookie
+
+PULSAR_PID_DIR=$SRC_DIR/logs/broker-0 \
+PULSAR_LOG_DIR=$SRC_DIR/logs/broker-0 \
+PULSAR_BROKER_CONF=$SRC_DIR/pulsar-client-cpp/test-conf/broker-0.conf \
+  $PULSAR_DIR/bin/pulsar-daemon start broker
+
+PULSAR_PID_DIR=$SRC_DIR/logs/broker-1 \
+PULSAR_LOG_DIR=$SRC_DIR/logs/broker-1 \
+PULSAR_BROKER_CONF=$SRC_DIR/pulsar-client-cpp/test-conf/broker-1.conf \
+  $PULSAR_DIR/bin/pulsar-daemon start broker
 
 echo "-- Wait for Pulsar service to be ready"
 until curl http://localhost:8080/metrics > /dev/null 2>&1 ; do sleep 1; done
