@@ -40,9 +40,8 @@ class LookupServiceWithBackoff : public LookupService,
     }
 
     LookupResultFuture getBroker(const TopicName& topicName) override {
-        return executeAsync<LookupResult>("get-broker-" + topicName.toString(), [this, topicName] {
-            return lookupService_->getBroker(topicName);
-        });
+        return executeAsync<LookupResult>("get-broker-" + topicName.toString(),
+                                          [this, topicName] { return lookupService_->getBroker(topicName); });
     }
 
     Future<Result, LookupDataResultPtr> getPartitionMetadataAsync(const TopicNamePtr& topicName) override {
@@ -88,10 +87,14 @@ class LookupServiceWithBackoff : public LookupService,
             if (result == ResultOk) {
                 rescheduleTasks_.remove(key);
                 promise.setValue(value);
+            } else if (result != ResultRetryable) {
+                rescheduleTasks_.remove(key);
+                promise.setFailed(result);
             } else {
                 auto it =
                     rescheduleTasks_.emplace(key, std::unique_ptr<DelayedTask>(new DelayedTask(ioService_)))
                         .first;
+                // TODO: handle the total timeout
                 it->second->execute(backoff_->next(), [this, weakSelf, key, f, promise] {
                     auto self = weakSelf.lock();
                     if (!self) {
