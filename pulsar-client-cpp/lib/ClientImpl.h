@@ -21,7 +21,8 @@
 
 #include <pulsar/Client.h>
 #include "ExecutorService.h"
-#include "BinaryProtoLookupService.h"
+#include "Backoff.h"
+#include "LookupService.h"
 #include "MemoryLimitController.h"
 #include "ConnectionPool.h"
 #include "LookupDataResult.h"
@@ -30,8 +31,11 @@
 #include "ProducerImplBase.h"
 #include "ConsumerImplBase.h"
 #include <atomic>
+#include <chrono>
 #include <vector>
 #include "ServiceNameResolver.h"
+#include "DelayedTask.h"
+#include "SynchronizedHashMap.h"
 
 namespace pulsar {
 
@@ -153,6 +157,7 @@ class ClientImpl : public std::enable_shared_from_this<ClientImpl> {
     ConsumersList consumers_;
 
     std::atomic<Result> closingError;
+    SynchronizedHashMap<std::string, std::shared_ptr<DelayedTask>> delayedGetPartitionMetadataTasks_;
 
     friend class Client;
 };

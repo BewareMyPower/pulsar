@@ -269,3 +269,11 @@ TEST(ClientTest, testWrongListener) {
     ASSERT_EQ(PulsarFriend::getConsumers(client).size(), 0);
     ASSERT_EQ(ResultOk, client.close());
 }
+
+TEST(ClientTest, testMultiBrokerUrl) {
+    const std::string topic = "client-test-multi-broker-url-" + std::to_string(time(nullptr));
+    Client client("pulsar://localhost:6000,localhost");  // the 1st address is not reachable
+    Producer producer;
+    ASSERT_EQ(ResultOk, client.createProducer(topic, producer));
+    client.close();
+}

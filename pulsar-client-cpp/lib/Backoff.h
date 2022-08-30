@@ -29,6 +29,9 @@ typedef boost::posix_time::time_duration TimeDuration;
 class PULSAR_PUBLIC Backoff {
    public:
     Backoff(const TimeDuration&, const TimeDuration&, const TimeDuration&);
+    Backoff(int timeoutSeconds)
+        : Backoff(boost::posix_time::milliseconds(100), boost::posix_time::seconds(timeoutSeconds * 2),
+                  boost::posix_time::milliseconds(0)) {}
     TimeDuration next();
     void reset();
 

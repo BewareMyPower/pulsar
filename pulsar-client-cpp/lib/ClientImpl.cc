@@ -27,6 +27,9 @@
 #include "MultiTopicsConsumerImpl.h"
 #include "PatternMultiTopicsConsumerImpl.h"
 #include "TimeUtils.h"
+#include "BinaryProtoLookupService.h"
+#include "HTTPLookupService.h"
+#include "LookupServiceWithBackoff.h"
 #include <pulsar/ConsoleLoggerFactory.h>
 #include <boost/algorithm/string/predicate.hpp>
 #include <sstream>
@@ -107,17 +110,21 @@ ClientImpl::ClientImpl(const std::string& serviceUrl, const ClientConfiguration&
     }
     LogUtils::setLoggerFactory(std::move(loggerFactory));
 
+    std::unique_ptr<LookupService> underlyingLookupServicePtr;
     if (serviceNameResolver_.useHttp()) {
         LOG_DEBUG("Using HTTP Lookup");
-        lookupServicePtr_ = std::make_shared<HTTPLookupService>(std::ref(serviceNameResolver_),
-                                                                std::cref(clientConfiguration_),
-                                                                std::cref(clientConfiguration_.getAuthPtr()));
+        underlyingLookupServicePtr.reset(new HTTPLookupService(serviceNameResolver_, clientConfiguration_,
+                                                               clientConfiguration_.getAuthPtr()));
     } else {
         LOG_DEBUG("Using Binary Lookup");
-        lookupServicePtr_ =
-            std::make_shared<BinaryProtoLookupService>(std::ref(serviceNameResolver_), std::ref(pool_),
-                                                       std::cref(clientConfiguration_.getListenerName()));
+        underlyingLookupServicePtr.reset(new BinaryProtoLookupService(
+            serviceNameResolver_, pool_, clientConfiguration_.getListenerName()));
     }
+
+    lookupServicePtr_ = LookupServiceWithBackoff::create(
+        std::move(underlyingLookupServicePtr),
+        std::unique_ptr<Backoff>(new Backoff(clientConfiguration_.getOperationTimeoutSeconds())),
+        ioExecutorProvider_->get()->getIOService());
 }
 
 ClientImpl::~ClientImpl() { shutdown(); }

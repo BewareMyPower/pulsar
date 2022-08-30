@@ -39,6 +39,7 @@ class PULSAR_PUBLIC ExecutorService : public std::enable_shared_from_this<Execut
    public:
     using IOService = boost::asio::io_service;
     using SharedPtr = std::shared_ptr<ExecutorService>;
+    using Duration = typename boost::asio::deadline_timer::duration_type;
 
     static SharedPtr create();
     ~ExecutorService();

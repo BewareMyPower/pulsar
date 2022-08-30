@@ -28,8 +28,10 @@
 #include <pulsar/Authentication.h>
 #include <boost/exception/all.hpp>
 #include "LogUtils.h"
+#include "LookupServiceWithBackoff.h"
 
 #include <algorithm>
+#include <atomic>
 
 using namespace pulsar;
 
@@ -178,4 +180,54 @@ TEST(LookupServiceTest, testMultiAddresses) {
     auto httpLookupServicePtr = std::make_shared<HTTPLookupService>(
         std::ref(serviceNameResolverForHttp), ClientConfiguration{}, AuthFactory::Disabled());
     testMultiAddresses(*httpLookupServicePtr);
+}
+
+TEST(LookupServiceTest, testRetry) {
+    auto executorProvider = std::make_shared<ExecutorServiceProvider>(1);
+    ConnectionPool pool({}, executorProvider, AuthFactory::Disabled(), true);
+    ServiceNameResolver serviceNameResolver("pulsar://localhost:9999,localhost");
+
+    auto lookupService = LookupServiceWithBackoff::create(
+        std::unique_ptr<LookupService>(new BinaryProtoLookupService(serviceNameResolver, pool, "")),
+        std::unique_ptr<Backoff>(new Backoff(60000)), executorProvider->get()->getIOService());
+
+    serviceNameResolver.setIndex(0);
+    auto topicNamePtr = TopicName::get("lookup-service-test-retry");
+    auto future1 = lookupService->getBroker(*topicNamePtr);
+    LookupService::LookupResult lookupResult;
+    ASSERT_EQ(ResultOk, future1.get(lookupResult));
+    LOG_INFO("getBroker returns logicalAddress: " << lookupResult.logicalAddress
+                                                  << ", physicalAddress: " << lookupResult.physicalAddress);
+
+    serviceNameResolver.setIndex(0);
+    auto future2 = lookupService->getPartitionMetadataAsync(topicNamePtr);
+    LookupDataResultPtr lookupDataResultPtr;
+    ASSERT_EQ(ResultOk, future2.get(lookupDataResultPtr));
+    LOG_INFO("getPartitionMetadataAsync returns " << lookupDataResultPtr->getPartitions() << " partitions");
+
+    serviceNameResolver.setIndex(0);
+    auto future3 = lookupService->getTopicsOfNamespaceAsync(topicNamePtr->getNamespaceName());
+    NamespaceTopicsPtr namespaceTopicsPtr;
+    ASSERT_EQ(ResultOk, future3.get(namespaceTopicsPtr));
+    LOG_INFO("getTopicPartitionName Async returns " << namespaceTopicsPtr->size() << " topics");
+
+    std::atomic_int retryCount{0};
+    constexpr int totalRetryCount = 3;
+    auto future4 = lookupService->executeAsync<int>("key", [&retryCount]() -> Future<Result, int> {
+        Promise<Result, int> promise;
+        if (++retryCount < totalRetryCount) {
+            LOG_INFO("Retry count: " << retryCount);
+            promise.setFailed(ResultUnknownError);
+        } else {
+            LOG_INFO("Retry done with " << retryCount << " times");
+            promise.setValue(100);
+        }
+        return promise.getFuture();
+    });
+    int customResult = 0;
+    ASSERT_EQ(ResultOk, future4.get(customResult));
+    ASSERT_EQ(customResult, 100);
+    ASSERT_EQ(retryCount.load(), totalRetryCount);
+
+    ASSERT_EQ(lookupService->getNumberOfPendingRescheduleTasks(), 0);
 }

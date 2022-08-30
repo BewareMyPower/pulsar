@@ -48,6 +48,9 @@ class ServiceNameResolver {
         return serviceUri_.getServiceHosts()[(numAddresses_ == 1) ? 0 : (index_++ % numAddresses_)];
     }
 
+    // This method should only be used for tests
+    void setIndex(size_t index) noexcept { index_ = index; }
+
    private:
     const ServiceURI serviceUri_;
     const size_t numAddresses_;
