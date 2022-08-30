@@ -59,7 +59,17 @@ class LookupServiceWithBackoff : public LookupService,
     template <typename T>
     Future<Result, T> executeAsync(const std::string& key, std::function<Future<Result, T>()> f) {
         Promise<Result, T> promise;
-        executeAsync(key, f, promise);
+        auto timeout = std::make_shared<DelayedTask>(ioService_);
+        std::weak_ptr<LookupServiceWithBackoff> weakSelf{shared_from_this()};
+        timeout->execute(boost::posix_time::seconds(timeoutInSeconds_), [this, weakSelf, promise, key] {
+            auto self = weakSelf.lock();
+            if (!self) {
+                return;
+            }
+            rescheduleTasks_.remove(key);
+            promise.setFailed(ResultTimeout);
+        });
+        executeAsync(key, f, promise, timeout);
         return promise.getFuture();
     }
 
@@ -67,27 +77,36 @@ class LookupServiceWithBackoff : public LookupService,
 
    private:
     std::unique_ptr<LookupService> lookupService_;
-    std::unique_ptr<Backoff> backoff_;
+    const int timeoutInSeconds_;
+    Backoff backoff_;
     boost::asio::io_service& ioService_;
     SynchronizedHashMap<std::string, std::unique_ptr<DelayedTask>> rescheduleTasks_;
 
-    LookupServiceWithBackoff(std::unique_ptr<LookupService>&& lookupService,
-                             std::unique_ptr<Backoff>&& backoff, boost::asio::io_service& ioService)
-        : lookupService_(std::move(lookupService)), backoff_(std::move(backoff)), ioService_(ioService) {}
+    LookupServiceWithBackoff(std::unique_ptr<LookupService>&& lookupService, int timeoutInSeconds,
+                             boost::asio::io_service& ioService)
+        : lookupService_(std::move(lookupService)),
+          timeoutInSeconds_(timeoutInSeconds),
+          backoff_(timeoutInSeconds),
+          ioService_(ioService) {}
 
     template <typename T>
     void executeAsync(const std::string& key, std::function<Future<Result, T>()> f,
-                      Promise<Result, T> promise) {
+                      Promise<Result, T> promise, std::shared_ptr<DelayedTask> timeout) {
         std::weak_ptr<LookupServiceWithBackoff> weakSelf{shared_from_this()};
-        f().addListener([this, weakSelf, key, f, promise](Result result, const T& value) {
+        f().addListener([this, weakSelf, key, f, promise, timeout](Result result, const T& value) {
             auto self = weakSelf.lock();
             if (!self) {
+                return;
+            }
+            if (promise.isComplete()) {
+                // The associated future has been completed by timeout
                 return;
             }
             if (result == ResultOk) {
                 rescheduleTasks_.remove(key);
                 promise.setValue(value);
-            } else if (result != ResultRetryable) {
+            } else if (result != ResultRetryable && result != ResultConnectError &&
+                       result != ResultNotConnected) {
                 rescheduleTasks_.remove(key);
                 promise.setFailed(result);
             } else {
@@ -95,12 +114,12 @@ class LookupServiceWithBackoff : public LookupService,
                     rescheduleTasks_.emplace(key, std::unique_ptr<DelayedTask>(new DelayedTask(ioService_)))
                         .first;
                 // TODO: handle the total timeout
-                it->second->execute(backoff_->next(), [this, weakSelf, key, f, promise] {
+                it->second->execute(backoff_.next(), [this, weakSelf, key, f, promise, timeout] {
                     auto self = weakSelf.lock();
                     if (!self) {
                         return;
                     }
-                    executeAsync(key, f, promise);
+                    executeAsync(key, f, promise, timeout);
                 });
             }
         });

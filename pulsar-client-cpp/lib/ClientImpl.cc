@@ -121,10 +121,9 @@ ClientImpl::ClientImpl(const std::string& serviceUrl, const ClientConfiguration&
             serviceNameResolver_, pool_, clientConfiguration_.getListenerName()));
     }
 
-    lookupServicePtr_ = LookupServiceWithBackoff::create(
-        std::move(underlyingLookupServicePtr),
-        std::unique_ptr<Backoff>(new Backoff(clientConfiguration_.getOperationTimeoutSeconds())),
-        ioExecutorProvider_->get()->getIOService());
+    lookupServicePtr_ = LookupServiceWithBackoff::create(std::move(underlyingLookupServicePtr),
+                                                         clientConfiguration_.getOperationTimeoutSeconds(),
+                                                         ioExecutorProvider_->get()->getIOService());
 }
 
 ClientImpl::~ClientImpl() { shutdown(); }

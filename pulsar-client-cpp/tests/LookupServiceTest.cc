@@ -189,7 +189,7 @@ TEST(LookupServiceTest, testRetry) {
 
     auto lookupService = LookupServiceWithBackoff::create(
         std::unique_ptr<LookupService>(new BinaryProtoLookupService(serviceNameResolver, pool, "")),
-        std::unique_ptr<Backoff>(new Backoff(60000)), executorProvider->get()->getIOService());
+        30 /* seconds */, executorProvider->get()->getIOService());
 
     serviceNameResolver.setIndex(0);
     auto topicNamePtr = TopicName::get("lookup-service-test-retry");
@@ -217,7 +217,7 @@ TEST(LookupServiceTest, testRetry) {
         Promise<Result, int> promise;
         if (++retryCount < totalRetryCount) {
             LOG_INFO("Retry count: " << retryCount);
-            promise.setFailed(ResultUnknownError);
+            promise.setFailed(ResultRetryable);
         } else {
             LOG_INFO("Retry done with " << retryCount << " times");
             promise.setValue(100);
@@ -228,6 +228,59 @@ TEST(LookupServiceTest, testRetry) {
     ASSERT_EQ(ResultOk, future4.get(customResult));
     ASSERT_EQ(customResult, 100);
     ASSERT_EQ(retryCount.load(), totalRetryCount);
+
+    ASSERT_EQ(lookupService->getNumberOfPendingRescheduleTasks(), 0);
+}
+
+TEST(LookupServiceTest, testTimeout) {
+    auto executorProvider = std::make_shared<ExecutorServiceProvider>(1);
+    ConnectionPool pool({}, executorProvider, AuthFactory::Disabled(), true);
+    ServiceNameResolver serviceNameResolver("pulsar://localhost:9990,localhost:9902,localhost:9904");
+
+    constexpr int timeoutInSeconds = 2;
+    auto lookupService = LookupServiceWithBackoff::create(
+        std::unique_ptr<LookupService>(new BinaryProtoLookupService(serviceNameResolver, pool, "")),
+        timeoutInSeconds, executorProvider->get()->getIOService());
+    auto topicNamePtr = TopicName::get("lookup-service-test-retry");
+
+    decltype(std::chrono::high_resolution_clock::now()) startTime;
+    auto beforeMethod = [&startTime] { startTime = std::chrono::high_resolution_clock::now(); };
+    auto afterMethod = [&startTime](const std::string& name) {
+        auto timeInterval = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                std::chrono::high_resolution_clock::now() - startTime)
+                                .count();
+        LOG_INFO(name << " took " << timeInterval << " seconds");
+        ASSERT_TRUE(timeInterval >= timeoutInSeconds * 1000L);
+    };
+
+    beforeMethod();
+    auto future1 = lookupService->getBroker(*topicNamePtr);
+    LookupService::LookupResult lookupResult;
+    ASSERT_EQ(ResultTimeout, future1.get(lookupResult));
+    afterMethod("getBroker");
+
+    beforeMethod();
+    auto future2 = lookupService->getPartitionMetadataAsync(topicNamePtr);
+    LookupDataResultPtr lookupDataResultPtr;
+    ASSERT_EQ(ResultTimeout, future2.get(lookupDataResultPtr));
+    afterMethod("getPartitionMetadataAsync");
+
+    beforeMethod();
+    auto future3 = lookupService->getTopicsOfNamespaceAsync(topicNamePtr->getNamespaceName());
+    NamespaceTopicsPtr namespaceTopicsPtr;
+    ASSERT_EQ(ResultTimeout, future3.get(namespaceTopicsPtr));
+    afterMethod("getTopicsOfNamespaceAsync");
+
+    beforeMethod();
+    auto future4 = lookupService->executeAsync<int>("custom call", []() -> Future<Result, int> {
+        std::this_thread::sleep_for(std::chrono::seconds(timeoutInSeconds + 1000));
+        Promise<Result, int> promise;
+        promise.setValue(100);
+        return promise.getFuture();
+    });
+    int customResult;
+    ASSERT_EQ(ResultTimeout, future4.get(customResult));
+    afterMethod("custom timeout");
 
     ASSERT_EQ(lookupService->getNumberOfPendingRescheduleTasks(), 0);
 }
