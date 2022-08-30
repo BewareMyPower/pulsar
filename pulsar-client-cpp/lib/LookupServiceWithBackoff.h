@@ -56,6 +56,7 @@ class LookupServiceWithBackoff : public LookupService,
             [this, nsName] { return lookupService_->getTopicsOfNamespaceAsync(nsName); });
     }
 
+    // NOTE: `f` should not be a blocking operation since it's executed in the event loop.
     template <typename T>
     Future<Result, T> executeAsync(const std::string& key, std::function<Future<Result, T>()> f) {
         Promise<Result, T> promise;
@@ -113,7 +114,6 @@ class LookupServiceWithBackoff : public LookupService,
                 auto it =
                     rescheduleTasks_.emplace(key, std::unique_ptr<DelayedTask>(new DelayedTask(ioService_)))
                         .first;
-                // TODO: handle the total timeout
                 it->second->execute(backoff_.next(), [this, weakSelf, key, f, promise, timeout] {
                     auto self = weakSelf.lock();
                     if (!self) {

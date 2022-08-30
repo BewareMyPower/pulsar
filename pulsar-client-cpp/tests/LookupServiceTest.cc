@@ -271,16 +271,5 @@ TEST(LookupServiceTest, testTimeout) {
     ASSERT_EQ(ResultTimeout, future3.get(namespaceTopicsPtr));
     afterMethod("getTopicsOfNamespaceAsync");
 
-    beforeMethod();
-    auto future4 = lookupService->executeAsync<int>("custom call", []() -> Future<Result, int> {
-        std::this_thread::sleep_for(std::chrono::seconds(timeoutInSeconds + 1000));
-        Promise<Result, int> promise;
-        promise.setValue(100);
-        return promise.getFuture();
-    });
-    int customResult;
-    ASSERT_EQ(ResultTimeout, future4.get(customResult));
-    afterMethod("custom timeout");
-
     ASSERT_EQ(lookupService->getNumberOfPendingRescheduleTasks(), 0);
 }
