@@ -35,7 +35,6 @@
 
 #include "ExecutorService.h"
 #include "Future.h"
-#include "PulsarApi.pb.h"
 #include <pulsar/Result.h>
 #include "SharedBuffer.h"
 #include "Backoff.h"
@@ -80,6 +79,14 @@ struct ResponseData {
 };
 
 typedef std::shared_ptr<std::vector<std::string>> NamespaceTopicsPtr;
+
+namespace proto {
+class BaseCommand;
+class CommandActiveConsumerChange;
+class CommandConnected;
+class CommandMessage;
+class MessageMetadata;
+}  // namespace proto
 
 class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<ClientConnection> {
     enum State
@@ -195,7 +202,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
                         proto::BaseCommand& incomingCmd_);
 
     void handleActiveConsumerChange(const proto::CommandActiveConsumerChange& change);
-    void handleIncomingCommand();
+    void handleIncomingCommand(const proto::BaseCommand& incomingCmd);
     void handleIncomingMessage(const proto::CommandMessage& msg, bool isChecksumValid,
                                proto::MessageMetadata& msgMetadata, SharedBuffer& payload);
 
@@ -287,7 +294,6 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
     boost::system::error_code error_;
 
     SharedBuffer incomingBuffer_;
-    proto::BaseCommand incomingCmd_;
 
     Promise<Result, ClientConnectionWeakPtr> connectPromise_;
     std::shared_ptr<PeriodicTask> connectTimeoutTask_;
@@ -321,7 +327,6 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
     int pendingWriteOperations_ = 0;
 
     SharedBuffer outgoingBuffer_;
-    proto::BaseCommand outgoingCmd_;
 
     HandlerAllocator readHandlerAllocator_;
     HandlerAllocator writeHandlerAllocator_;
@@ -342,7 +347,7 @@ class PULSAR_PUBLIC ClientConnection : public std::enable_shared_from_this<Clien
     bool isTlsAllowInsecureConnection_ = false;
 
     void closeSocket();
-    void checkServerError(const proto::ServerError& error);
+    void checkServerError(int error);
 };
 }  // namespace pulsar
 

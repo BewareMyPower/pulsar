@@ -30,7 +30,6 @@
 #include "MessageCrypto.h"
 #include "stats/ProducerStatsDisabled.h"
 #include "stats/ProducerStatsImpl.h"
-#include "PulsarApi.pb.h"
 #include "OpSendMsg.h"
 #include "BatchMessageContainerBase.h"
 #include "PendingFailures.h"
@@ -49,6 +48,10 @@ class PulsarFriend;
 class Producer;
 class MemoryLimitController;
 class TopicName;
+
+namespace proto {
+class MessageMetadata;
+}  // namespace proto
 
 class ProducerImpl : public HandlerBase,
                      public std::enable_shared_from_this<ProducerImpl>,
@@ -161,7 +164,6 @@ class ProducerImpl : public HandlerBase,
     std::string producerStr_;
     uint64_t producerId_;
     int64_t msgSequenceGenerator_;
-    proto::BaseCommand cmd_;
 
     std::unique_ptr<BatchMessageContainerBase> batchMessageContainer_;
     boost::asio::deadline_timer batchTimer_;

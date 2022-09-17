@@ -34,6 +34,7 @@
 #include "MessageCrypto.h"
 #include "AckGroupingTracker.h"
 #include "GetLastMessageIdResponse.h"
+#include "PulsarApiEnums.h"
 
 #include "CompressionCodec.h"
 #include <boost/dynamic_bitset.hpp>
@@ -57,6 +58,12 @@ class BatchAcknowledgementTracker;
 typedef std::shared_ptr<MessageCrypto> MessageCryptoPtr;
 typedef std::function<void(Result, const GetLastMessageIdResponse&)> BrokerGetLastMessageIdCallback;
 typedef std::shared_ptr<Backoff> BackoffPtr;
+
+namespace proto {
+class CommandMessage;
+class MessageIdData;
+class MessageMetadata;
+}  // namespace proto
 
 enum ConsumerTopicType
 {
@@ -83,8 +90,6 @@ class ConsumerImpl : public ConsumerImplBase,
                          bool& isChecksumValid, proto::MessageMetadata& msgMetadata, SharedBuffer& payload);
     void messageProcessed(Message& msg, bool track = true);
     void activeConsumerChanged(bool isActive);
-    inline proto::CommandSubscribe_SubType getSubType();
-    inline proto::CommandSubscribe_InitialPosition getInitialPosition();
     void handleUnsubscribe(Result result, ResultCallback callback);
 
     /**
@@ -164,7 +169,7 @@ class ConsumerImpl : public ConsumerImplBase,
                                    const proto::MessageMetadata& metadata, SharedBuffer& payload,
                                    bool checkMaxMessageSize);
     void discardCorruptedMessage(const ClientConnectionPtr& cnx, const proto::MessageIdData& messageId,
-                                 proto::CommandAck::ValidationError validationError);
+                                 CommandAck_ValidationError validationError);
     void increaseAvailablePermits(const ClientConnectionPtr& currentCnx, int delta = 1);
     void drainIncomingMessageQueue(size_t count);
     uint32_t receiveIndividualMessagesFromBatch(const ClientConnectionPtr& cnx, Message& batchedMessage,
@@ -177,7 +182,7 @@ class ConsumerImpl : public ConsumerImplBase,
     // TODO - Convert these functions to lambda when we move to C++11
     Result receiveHelper(Message& msg);
     Result receiveHelper(Message& msg, int timeout);
-    void statsCallback(Result, ResultCallback, proto::CommandAck_AckType);
+    void statsCallback(Result, ResultCallback, CommandAck_AckType);
     void notifyPendingReceivedCallback(Result result, Message& message, const ReceiveCallback& callback);
     void failPendingReceiveCallback();
     void setNegativeAcknowledgeEnabledForTesting(bool enabled) override;

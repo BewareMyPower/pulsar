@@ -25,7 +25,7 @@
 #include <pulsar/Schema.h>
 #include <pulsar/KeySharedPolicy.h>
 
-#include "PulsarApi.pb.h"
+#include "PulsarApiEnums.h"
 #include "SharedBuffer.h"
 #include "Utils.h"
 
@@ -34,6 +34,12 @@
 using namespace pulsar;
 
 namespace pulsar {
+
+namespace proto {
+class BaseCommand;
+class MessageMetadata;
+class MessageIdData;
+}  // namespace proto
 
 typedef std::shared_ptr<proto::MessageMetadata> MessageMetadataPtr;
 
@@ -85,12 +91,12 @@ class Commands {
 
     static SharedBuffer newSubscribe(const std::string& topic, const std::string& subscription,
                                      uint64_t consumerId, uint64_t requestId,
-                                     proto::CommandSubscribe_SubType subType, const std::string& consumerName,
+                                     CommandSubscribe_SubType subType, const std::string& consumerName,
                                      SubscriptionMode subscriptionMode, Optional<MessageId> startMessageId,
                                      bool readCompacted, const std::map<std::string, std::string>& metadata,
                                      const std::map<std::string, std::string>& subscriptionProperties,
                                      const SchemaInfo& schemaInfo,
-                                     proto::CommandSubscribe_InitialPosition subscriptionInitialPosition,
+                                     CommandSubscribe_InitialPosition subscriptionInitialPosition,
                                      bool replicateSubscriptionState, KeySharedPolicy keySharedPolicy,
                                      int priorityLevel = 0);
 
@@ -103,7 +109,7 @@ class Commands {
                                     bool userProvidedProducerName, bool encrypted);
 
     static SharedBuffer newAck(uint64_t consumerId, const proto::MessageIdData& messageId,
-                               proto::CommandAck_AckType ackType, int validationError);
+                               CommandAck_AckType ackType, int validationError);
     static SharedBuffer newMultiMessageAck(uint64_t consumerId, const std::set<MessageId>& msgIds);
 
     static SharedBuffer newFlow(uint64_t consumerId, uint32_t messagePermits);
@@ -118,9 +124,9 @@ class Commands {
     static SharedBuffer newRedeliverUnacknowledgedMessages(uint64_t consumerId,
                                                            const std::set<MessageId>& messageIds);
 
-    static std::string messageType(proto::BaseCommand::Type type);
+    static std::string messageType(BaseCommand_Type type);
 
-    static void initBatchMessageMetadata(const Message& msg, pulsar::proto::MessageMetadata& batchMetadata);
+    static void initBatchMessageMetadata(const Message& msg, proto::MessageMetadata& batchMetadata);
 
     static PULSAR_PUBLIC uint64_t serializeSingleMessageInBatchWithPayload(
         const Message& msg, SharedBuffer& batchPayLoad, unsigned long maxMessageSizeInBytes);

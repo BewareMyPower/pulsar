@@ -24,7 +24,7 @@
 #include <set>
 #include <memory>
 
-#include "PulsarApi.pb.h"
+#include "PulsarApiEnums.h"
 #include "ClientConnection.h"
 #include <pulsar/MessageId.h>
 
@@ -93,7 +93,7 @@ class AckGroupingTracker : public std::enable_shared_from_this<AckGroupingTracke
      * @return true if the ACK is sent successfully, otherwise false.
      */
     bool doImmediateAck(ClientConnectionWeakPtr connWeakPtr, uint64_t consumerId, const MessageId& msgId,
-                        proto::CommandAck_AckType ackType);
+                        CommandAck_AckType ackType);
 
     /**
      * Immediately send a set of ACK requests one by one to the broker, it only supports individual

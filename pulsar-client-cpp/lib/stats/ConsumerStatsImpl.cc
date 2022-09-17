@@ -80,16 +80,16 @@ void ConsumerStatsImpl::receivedMessage(Message& msg, Result res) {
     totalReceivedMsgMap_[res] += 1;
 }
 
-void ConsumerStatsImpl::messageAcknowledged(Result res, proto::CommandAck_AckType ackType) {
+void ConsumerStatsImpl::messageAcknowledged(Result res, CommandAck_AckType ackType) {
     Lock lock(mutex_);
     ackedMsgMap_[std::make_pair(res, ackType)] += 1;
     totalAckedMsgMap_[std::make_pair(res, ackType)] += 1;
 }
 
 std::ostream& operator<<(std::ostream& os,
-                         const std::map<std::pair<Result, proto::CommandAck_AckType>, unsigned long>& m) {
+                         const std::map<std::pair<Result, CommandAck_AckType>, unsigned long>& m) {
     os << "{";
-    for (std::map<std::pair<Result, proto::CommandAck_AckType>, unsigned long>::const_iterator it = m.begin();
+    for (std::map<std::pair<Result, CommandAck_AckType>, unsigned long>::const_iterator it = m.begin();
          it != m.end(); it++) {
         os << "[Key: {"
            << "Result: " << strResult((it->first).first) << ", ackType: " << (it->first).second

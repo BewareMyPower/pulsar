@@ -28,7 +28,6 @@
 #include "lib/ConsumerImplBase.h"
 #include <boost/asio.hpp>
 #include <lib/LogUtils.h>
-#include "lib/PulsarApi.pb.h"
 #include <boost/asio/error.hpp>
 namespace pulsar {
 

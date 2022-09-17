@@ -31,10 +31,39 @@
 #include "AckGroupingTrackerDisabled.h"
 #include <exception>
 #include <algorithm>
+#include "PulsarApi.pb.h"
 
 namespace pulsar {
 
 DECLARE_LOG_OBJECT()
+
+static pulsar::CommandSubscribe_SubType toProto(ConsumerType type) {
+    switch (type) {
+        case ConsumerExclusive:
+            return pulsar::CommandSubscribe_SubType_Exclusive;
+
+        case ConsumerShared:
+            return pulsar::CommandSubscribe_SubType_Shared;
+
+        case ConsumerFailover:
+            return pulsar::CommandSubscribe_SubType_Failover;
+
+        case ConsumerKeyShared:
+            return pulsar::CommandSubscribe_SubType_Key_Shared;
+    }
+    BOOST_THROW_EXCEPTION(std::logic_error("Invalid ConsumerType enumeration value"));
+}
+
+static proto::CommandSubscribe_InitialPosition toProto(InitialPosition initialPosition) {
+    switch (initialPosition) {
+        case InitialPositionLatest:
+            return proto::CommandSubscribe_InitialPosition::CommandSubscribe_InitialPosition_Latest;
+
+        case InitialPositionEarliest:
+            return proto::CommandSubscribe_InitialPosition::CommandSubscribe_InitialPosition_Earliest;
+    }
+    BOOST_THROW_EXCEPTION(std::logic_error("Invalid InitialPosition enumeration value"));
+}
 
 ConsumerImpl::ConsumerImpl(const ClientImplPtr client, const std::string& topic,
                            const std::string& subscriptionName, const ConsumerConfiguration& conf,
@@ -185,9 +214,10 @@ void ConsumerImpl::connectionOpened(const ClientConnectionPtr& cnx) {
     ClientImplPtr client = client_.lock();
     uint64_t requestId = client->newRequestId();
     SharedBuffer cmd = Commands::newSubscribe(
-        topic_, subscription_, consumerId_, requestId, getSubType(), consumerName_, subscriptionMode_,
-        startMessageId, readCompacted_, config_.getProperties(), config_.getSubscriptionProperties(),
-        config_.getSchema(), getInitialPosition(), config_.isReplicateSubscriptionStateEnabled(),
+        topic_, subscription_, consumerId_, requestId, toProto(config_.getConsumerType()), consumerName_,
+        subscriptionMode_, startMessageId, readCompacted_, config_.getProperties(),
+        config_.getSubscriptionProperties(), config_.getSchema(),
+        toProto(config_.getSubscriptionInitialPosition()), config_.isReplicateSubscriptionStateEnabled(),
         config_.getKeySharedPolicy(), config_.getPriorityLevel());
     cnx->sendRequestWithId(cmd, requestId)
         .addListener(
@@ -393,7 +423,7 @@ void ConsumerImpl::messageReceived(const ClientConnectionPtr& cnx, const proto::
 
     if (!isChecksumValid) {
         // Message discarded for checksum error
-        discardCorruptedMessage(cnx, msg.message_id(), proto::CommandAck::ChecksumMismatch);
+        discardCorruptedMessage(cnx, msg.message_id(), pulsar::CommandAck_ValidationError_ChecksumMismatch);
         return;
     }
 
@@ -596,7 +626,8 @@ bool ConsumerImpl::decryptMessageIfNeeded(const ClientConnectionPtr& cnx, const 
         } else if (config_.getCryptoFailureAction() == ConsumerCryptoFailureAction::DISCARD) {
             LOG_WARN(getName() << "Skipping decryption since CryptoKeyReader is not implemented and config "
                                   "is set to discard");
-            discardCorruptedMessage(cnx, msg.message_id(), proto::CommandAck::DecryptionError);
+            discardCorruptedMessage(cnx, msg.message_id(),
+                                    pulsar::CommandAck_ValidationError_DecryptionError);
         } else {
             LOG_ERROR(getName() << "Message delivery failed since CryptoKeyReader is not implemented to "
                                    "consume encrypted message");
@@ -617,7 +648,7 @@ bool ConsumerImpl::decryptMessageIfNeeded(const ClientConnectionPtr& cnx, const 
         return true;
     } else if (config_.getCryptoFailureAction() == ConsumerCryptoFailureAction::DISCARD) {
         LOG_WARN(getName() << "Discarding message since decryption failed and config is set to discard");
-        discardCorruptedMessage(cnx, msg.message_id(), proto::CommandAck::DecryptionError);
+        discardCorruptedMessage(cnx, msg.message_id(), pulsar::CommandAck_ValidationError_DecryptionError);
     } else {
         LOG_ERROR(getName() << "Message delivery failed since unable to decrypt incoming message");
     }
@@ -641,7 +672,8 @@ bool ConsumerImpl::uncompressMessageIfNeeded(const ClientConnectionPtr& cnx,
             // Uncompressed size is itself corrupted since it cannot be bigger than the MaxMessageSize
             LOG_ERROR(getName() << "Got corrupted payload message size " << payloadSize  //
                                 << " at  " << messageIdData.ledgerid() << ":" << messageIdData.entryid());
-            discardCorruptedMessage(cnx, messageIdData, proto::CommandAck::UncompressedSizeCorruption);
+            discardCorruptedMessage(cnx, messageIdData,
+                                    pulsar::CommandAck_ValidationError_UncompressedSizeCorruption);
             return false;
         }
     } else {
@@ -652,7 +684,7 @@ bool ConsumerImpl::uncompressMessageIfNeeded(const ClientConnectionPtr& cnx,
     if (!CompressionCodecProvider::getCodec(compressionType).decode(payload, uncompressedSize, payload)) {
         LOG_ERROR(getName() << "Failed to decompress message with " << uncompressedSize  //
                             << " at  " << messageIdData.ledgerid() << ":" << messageIdData.entryid());
-        discardCorruptedMessage(cnx, messageIdData, proto::CommandAck::DecompressionError);
+        discardCorruptedMessage(cnx, messageIdData, pulsar::CommandAck_ValidationError_DecompressionError);
         return false;
     }
 
@@ -661,7 +693,7 @@ bool ConsumerImpl::uncompressMessageIfNeeded(const ClientConnectionPtr& cnx,
 
 void ConsumerImpl::discardCorruptedMessage(const ClientConnectionPtr& cnx,
                                            const proto::MessageIdData& messageId,
-                                           proto::CommandAck::ValidationError validationError) {
+                                           pulsar::CommandAck_ValidationError validationError) {
     LOG_ERROR(getName() << "Discarding corrupted message at " << messageId.ledgerid() << ":"
                         << messageId.entryid());
 
@@ -877,37 +909,7 @@ void ConsumerImpl::increaseAvailablePermits(const ClientConnectionPtr& currentCn
     }
 }
 
-inline proto::CommandSubscribe_SubType ConsumerImpl::getSubType() {
-    ConsumerType type = config_.getConsumerType();
-    switch (type) {
-        case ConsumerExclusive:
-            return proto::CommandSubscribe::Exclusive;
-
-        case ConsumerShared:
-            return proto::CommandSubscribe::Shared;
-
-        case ConsumerFailover:
-            return proto::CommandSubscribe::Failover;
-
-        case ConsumerKeyShared:
-            return proto::CommandSubscribe_SubType_Key_Shared;
-    }
-    BOOST_THROW_EXCEPTION(std::logic_error("Invalid ConsumerType enumeration value"));
-}
-
-inline proto::CommandSubscribe_InitialPosition ConsumerImpl::getInitialPosition() {
-    InitialPosition initialPosition = config_.getSubscriptionInitialPosition();
-    switch (initialPosition) {
-        case InitialPositionLatest:
-            return proto::CommandSubscribe_InitialPosition::CommandSubscribe_InitialPosition_Latest;
-
-        case InitialPositionEarliest:
-            return proto::CommandSubscribe_InitialPosition::CommandSubscribe_InitialPosition_Earliest;
-    }
-    BOOST_THROW_EXCEPTION(std::logic_error("Invalid InitialPosition enumeration value"));
-}
-
-void ConsumerImpl::statsCallback(Result res, ResultCallback callback, proto::CommandAck_AckType ackType) {
+void ConsumerImpl::statsCallback(Result res, ResultCallback callback, pulsar::CommandAck_AckType ackType) {
     consumerStatsBasePtr_->messageAcknowledged(res, ackType);
     if (callback) {
         callback(res);
@@ -916,7 +918,7 @@ void ConsumerImpl::statsCallback(Result res, ResultCallback callback, proto::Com
 
 void ConsumerImpl::acknowledgeAsync(const MessageId& msgId, ResultCallback callback) {
     ResultCallback cb = std::bind(&ConsumerImpl::statsCallback, shared_from_this(), std::placeholders::_1,
-                                  callback, proto::CommandAck_AckType_Individual);
+                                  callback, pulsar::CommandAck_AckType_Individual);
     if (msgId.batchIndex() != -1 &&
         !batchAcknowledgementTracker_.isBatchReady(msgId, proto::CommandAck_AckType_Individual)) {
         cb(ResultOk);

@@ -34,7 +34,7 @@ namespace pulsar {
 DECLARE_LOG_OBJECT();
 
 inline void sendAck(ClientConnectionPtr cnx, uint64_t consumerId, const MessageId& msgId,
-                    proto::CommandAck_AckType ackType) {
+                    pulsar::CommandAck_AckType ackType) {
     proto::MessageIdData msgIdData;
     msgIdData.set_ledgerid(msgId.ledgerId());
     msgIdData.set_entryid(msgId.entryId());
@@ -45,7 +45,7 @@ inline void sendAck(ClientConnectionPtr cnx, uint64_t consumerId, const MessageI
 }
 
 bool AckGroupingTracker::doImmediateAck(ClientConnectionWeakPtr connWeakPtr, uint64_t consumerId,
-                                        const MessageId& msgId, proto::CommandAck_AckType ackType) {
+                                        const MessageId& msgId, pulsar::CommandAck_AckType ackType) {
     auto cnx = connWeakPtr.lock();
     if (cnx == nullptr) {
         LOG_DEBUG("Connection is not ready, ACK failed for message - [" << msgId.ledgerId() << ", "
@@ -65,7 +65,7 @@ bool AckGroupingTracker::doImmediateAck(ClientConnectionWeakPtr connWeakPtr, uin
     }
 
     for (const auto& msgId : msgIds) {
-        sendAck(cnx, consumerId, msgId, proto::CommandAck::Individual);
+        sendAck(cnx, consumerId, msgId, pulsar::CommandAck_AckType_Individual);
     }
     return true;
 }

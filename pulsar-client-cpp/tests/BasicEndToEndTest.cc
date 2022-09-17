@@ -42,7 +42,7 @@
 #include <lib/TopicName.h>
 #include <lib/ClientImpl.h>
 #include <lib/ConsumerImpl.h>
-#include <lib/PulsarApi.pb.h>
+#include <lib/PulsarApiEnums.h>
 #include <lib/MultiTopicsConsumerImpl.h>
 #include <lib/AckGroupingTrackerEnabled.h>
 #include <lib/AckGroupingTrackerDisabled.h>
@@ -3518,7 +3518,7 @@ class AckGroupingTrackerMock : public AckGroupingTracker {
     explicit AckGroupingTrackerMock(bool mockAck) : mockAck_(mockAck) {}
 
     bool callDoImmediateAck(ClientConnectionWeakPtr connWeakPtr, uint64_t consumerId, const MessageId &msgId,
-                            proto::CommandAck_AckType ackType) {
+                            CommandAck_AckType ackType) {
         if (!this->mockAck_) {
             // Not mocking ACK, expose this method.
             return this->doImmediateAck(connWeakPtr, consumerId, msgId, ackType);
@@ -3592,7 +3592,7 @@ TEST(BasicEndToEndTest, testAckGroupingTrackerSingleAckBehavior) {
         auto connPtr = connWeakPtr.lock();
         ASSERT_NE(connPtr, nullptr);
         ASSERT_TRUE(tracker.callDoImmediateAck(connWeakPtr, consumerImpl.getConsumerId(), recvMsgId[msgIdx],
-                                               proto::CommandAck::Individual));
+                                               CommandAck_AckType_Individual));
     }
     Message msg;
     ASSERT_EQ(ResultTimeout, consumer.receive(msg, 1000));

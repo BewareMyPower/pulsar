@@ -655,7 +655,8 @@ void ClientConnection::processIncomingBuffer() {
 
         // At this point,  we have at least one complete frame available in the buffer
         uint32_t cmdSize = incomingBuffer_.readUnsignedInt();
-        if (!incomingCmd_.ParseFromArray(incomingBuffer_.data(), cmdSize)) {
+        BaseCommand incomingCmd;
+        if (!incomingCmd.ParseFromArray(incomingBuffer_.data(), cmdSize)) {
             LOG_ERROR(cnxString_ << "Error parsing protocol buffer command");
             close();
             return;
@@ -663,20 +664,20 @@ void ClientConnection::processIncomingBuffer() {
 
         incomingBuffer_.consume(cmdSize);
 
-        if (incomingCmd_.type() == BaseCommand::MESSAGE) {
+        if (incomingCmd.type() == BaseCommand::MESSAGE) {
             // Parse message metadata and extract payload
             MessageMetadata msgMetadata;
 
             // read checksum
             uint32_t remainingBytes = frameSize - (cmdSize + 4);
-            bool isChecksumValid = verifyChecksum(incomingBuffer_, remainingBytes, incomingCmd_);
+            bool isChecksumValid = verifyChecksum(incomingBuffer_, remainingBytes, incomingCmd);
 
             uint32_t metadataSize = incomingBuffer_.readUnsignedInt();
             if (!msgMetadata.ParseFromArray(incomingBuffer_.data(), metadataSize)) {
-                LOG_ERROR(cnxString_ << "[consumer id " << incomingCmd_.message().consumer_id()  //
+                LOG_ERROR(cnxString_ << "[consumer id " << incomingCmd.message().consumer_id()  //
                                      << ", message ledger id "
-                                     << incomingCmd_.message().message_id().ledgerid()  //
-                                     << ", entry id " << incomingCmd_.message().message_id().entryid()
+                                     << incomingCmd.message().message_id().ledgerid()  //
+                                     << ", entry id " << incomingCmd.message().message_id().entryid()
                                      << "] Error parsing message metadata");
                 close();
                 return;
@@ -688,9 +689,9 @@ void ClientConnection::processIncomingBuffer() {
             uint32_t payloadSize = remainingBytes;
             SharedBuffer payload = SharedBuffer::copy(incomingBuffer_.data(), payloadSize);
             incomingBuffer_.consume(payloadSize);
-            handleIncomingMessage(incomingCmd_.message(), isChecksumValid, msgMetadata, payload);
+            handleIncomingMessage(incomingCmd.message(), isChecksumValid, msgMetadata, payload);
         } else {
-            handleIncomingCommand();
+            handleIncomingCommand(incomingCmd);
         }
     }
     if (incomingBuffer_.readableBytes() > 0) {
@@ -718,7 +719,7 @@ void ClientConnection::processIncomingBuffer() {
 }
 
 bool ClientConnection::verifyChecksum(SharedBuffer& incomingBuffer_, uint32_t& remainingBytes,
-                                      proto::BaseCommand& incomingCmd_) {
+                                      proto::BaseCommand& incomingCmd) {
     int readerIndex = incomingBuffer_.readerIndex();
     bool isChecksumValid = true;
 
@@ -734,9 +735,9 @@ bool ClientConnection::verifyChecksum(SharedBuffer& incomingBuffer_, uint32_t& r
 
         if (!isChecksumValid) {
             LOG_ERROR("[consumer id "
-                      << incomingCmd_.message().consumer_id()                                           //
-                      << ", message ledger id " << incomingCmd_.message().message_id().ledgerid()       //
-                      << ", entry id " << incomingCmd_.message().message_id().entryid()                 //
+                      << incomingCmd.message().consumer_id()                                            //
+                      << ", message ledger id " << incomingCmd.message().message_id().ledgerid()        //
+                      << ", entry id " << incomingCmd.message().message_id().entryid()                  //
                       << "stored-checksum" << storedChecksum << "computedChecksum" << computedChecksum  //
                       << "] Checksum verification failed");
         }
@@ -791,8 +792,8 @@ void ClientConnection::handleIncomingMessage(const proto::CommandMessage& msg, b
     }
 }
 
-void ClientConnection::handleIncomingCommand() {
-    LOG_DEBUG(cnxString_ << "Handling incoming command: " << Commands::messageType(incomingCmd_.type()));
+void ClientConnection::handleIncomingCommand(const proto::BaseCommand& incomingCmd) {
+    LOG_DEBUG(cnxString_ << "Handling incoming command: " << Commands::messageType(incomingCmd.type()));
 
     switch (state_) {
         case Pending: {
@@ -802,11 +803,11 @@ void ClientConnection::handleIncomingCommand() {
 
         case TcpConnected: {
             // Handle Pulsar Connected
-            if (incomingCmd_.type() != BaseCommand::CONNECTED) {
+            if (incomingCmd.type() != BaseCommand::CONNECTED) {
                 // Wrong cmd
                 close();
             } else {
-                handlePulsarConnected(incomingCmd_.connected());
+                handlePulsarConnected(incomingCmd.connected());
             }
             break;
         }
@@ -822,9 +823,9 @@ void ClientConnection::handleIncomingCommand() {
             havePendingPingRequest_ = false;
 
             // Handle normal commands
-            switch (incomingCmd_.type()) {
+            switch (incomingCmd.type()) {
                 case BaseCommand::SEND_RECEIPT: {
-                    const CommandSendReceipt& sendReceipt = incomingCmd_.send_receipt();
+                    const CommandSendReceipt& sendReceipt = incomingCmd.send_receipt();
                     int producerId = sendReceipt.producer_id();
                     uint64_t sequenceId = sendReceipt.sequence_id();
                     const proto::MessageIdData& messageIdData = sendReceipt.message_id();
@@ -856,7 +857,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::SEND_ERROR: {
-                    const CommandSendError& error = incomingCmd_.send_error();
+                    const CommandSendError& error = incomingCmd.send_error();
                     LOG_WARN(cnxString_ << "Received send error from server: " << error.message());
                     if (ChecksumError == error.error()) {
                         long producerId = error.producer_id();
@@ -882,7 +883,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::SUCCESS: {
-                    const CommandSuccess& success = incomingCmd_.success();
+                    const CommandSuccess& success = incomingCmd.success();
                     LOG_DEBUG(cnxString_ << "Received success response from server. req_id: "
                                          << success.request_id());
 
@@ -901,7 +902,7 @@ void ClientConnection::handleIncomingCommand() {
 
                 case BaseCommand::PARTITIONED_METADATA_RESPONSE: {
                     const CommandPartitionedTopicMetadataResponse& partitionMetadataResponse =
-                        incomingCmd_.partitionmetadataresponse();
+                        incomingCmd.partitionmetadataresponse();
                     LOG_DEBUG(cnxString_ << "Received partition-metadata response from server. req_id: "
                                          << partitionMetadataResponse.request_id());
 
@@ -947,7 +948,7 @@ void ClientConnection::handleIncomingCommand() {
 
                 case BaseCommand::CONSUMER_STATS_RESPONSE: {
                     const CommandConsumerStatsResponse& consumerStatsResponse =
-                        incomingCmd_.consumerstatsresponse();
+                        incomingCmd.consumerstatsresponse();
                     LOG_DEBUG(cnxString_ << "ConsumerStatsResponse command - Received consumer stats "
                                             "response from server. req_id: "
                                          << consumerStatsResponse.request_id());
@@ -990,8 +991,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::LOOKUP_RESPONSE: {
-                    const CommandLookupTopicResponse& lookupTopicResponse =
-                        incomingCmd_.lookuptopicresponse();
+                    const CommandLookupTopicResponse& lookupTopicResponse = incomingCmd.lookuptopicresponse();
                     LOG_DEBUG(cnxString_ << "Received lookup response from server. req_id: "
                                          << lookupTopicResponse.request_id());
 
@@ -1055,7 +1055,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::PRODUCER_SUCCESS: {
-                    const CommandProducerSuccess& producerSuccess = incomingCmd_.producer_success();
+                    const CommandProducerSuccess& producerSuccess = incomingCmd.producer_success();
                     LOG_DEBUG(cnxString_ << "Received success producer response from server. req_id: "
                                          << producerSuccess.request_id()  //
                                          << " -- producer name: " << producerSuccess.producer_name());
@@ -1080,7 +1080,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::ERROR: {
-                    const CommandError& error = incomingCmd_.error();
+                    const CommandError& error = incomingCmd.error();
                     Result result = getResult(error.error(), error.message());
                     LOG_WARN(cnxString_ << "Received error response from server: " << result
                                         << (error.has_message() ? (" (" + error.message() + ")") : "")
@@ -1123,7 +1123,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::CLOSE_PRODUCER: {
-                    const CommandCloseProducer& closeProducer = incomingCmd_.close_producer();
+                    const CommandCloseProducer& closeProducer = incomingCmd.close_producer();
                     int producerId = closeProducer.producer_id();
 
                     LOG_DEBUG("Broker notification of Closed producer: " << producerId);
@@ -1147,7 +1147,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::CLOSE_CONSUMER: {
-                    const CommandCloseConsumer& closeconsumer = incomingCmd_.close_consumer();
+                    const CommandCloseConsumer& closeconsumer = incomingCmd.close_consumer();
                     int consumerId = closeconsumer.consumer_id();
 
                     LOG_DEBUG("Broker notification of Closed consumer: " << consumerId);
@@ -1199,7 +1199,7 @@ void ClientConnection::handleIncomingCommand() {
                 }
 
                 case BaseCommand::ACTIVE_CONSUMER_CHANGE: {
-                    const CommandActiveConsumerChange& change = incomingCmd_.active_consumer_change();
+                    const CommandActiveConsumerChange& change = incomingCmd.active_consumer_change();
                     LOG_DEBUG(cnxString_
                               << "Received notification about active consumer change, consumer_id: "
                               << change.consumer_id() << " isActive: " << change.is_active());
@@ -1209,7 +1209,7 @@ void ClientConnection::handleIncomingCommand() {
 
                 case BaseCommand::GET_LAST_MESSAGE_ID_RESPONSE: {
                     const CommandGetLastMessageIdResponse& getLastMessageIdResponse =
-                        incomingCmd_.getlastmessageidresponse();
+                        incomingCmd.getlastmessageidresponse();
                     LOG_DEBUG(cnxString_ << "Received getLastMessageIdResponse from server. req_id: "
                                          << getLastMessageIdResponse.request_id());
 
@@ -1241,7 +1241,7 @@ void ClientConnection::handleIncomingCommand() {
 
                 case BaseCommand::GET_TOPICS_OF_NAMESPACE_RESPONSE: {
                     const CommandGetTopicsOfNamespaceResponse& response =
-                        incomingCmd_.gettopicsofnamespaceresponse();
+                        incomingCmd.gettopicsofnamespaceresponse();
 
                     LOG_DEBUG(cnxString_ << "Received GetTopicsOfNamespaceResponse from server. req_id: "
                                          << response.request_id() << " topicsSize" << response.topics_size());
@@ -1396,8 +1396,9 @@ void ClientConnection::sendMessage(const OpSendMsg& opSend) {
 }
 
 void ClientConnection::sendMessageInternal(const OpSendMsg& opSend) {
+    BaseCommand outgoingCmd;
     PairSharedBuffer buffer =
-        Commands::newSend(outgoingBuffer_, outgoingCmd_, opSend.producerId_, opSend.sequenceId_,
+        Commands::newSend(outgoingBuffer_, outgoingCmd, opSend.producerId_, opSend.sequenceId_,
                           getChecksumType(), opSend.metadata_, opSend.payload_);
 
     asyncWrite(buffer, customAllocWriteHandler(std::bind(&ClientConnection::handleSendPair,
@@ -1439,8 +1440,9 @@ void ClientConnection::sendPendingCommands() {
             assert(any.type() == typeid(OpSendMsg));
 
             const OpSendMsg& op = boost::any_cast<const OpSendMsg&>(any);
+            BaseCommand outgoingCmd;
             PairSharedBuffer buffer =
-                Commands::newSend(outgoingBuffer_, outgoingCmd_, op.producerId_, op.sequenceId_,
+                Commands::newSend(outgoingBuffer_, outgoingCmd, op.producerId_, op.sequenceId_,
                                   getChecksumType(), op.metadata_, op.payload_);
 
             asyncWrite(buffer, customAllocWriteHandler(std::bind(&ClientConnection::handleSendPair,
@@ -1688,7 +1690,7 @@ void ClientConnection::closeSocket() {
     }
 }
 
-void ClientConnection::checkServerError(const proto::ServerError& error) {
+void ClientConnection::checkServerError(int error) {
     switch (error) {
         case proto::ServerError::ServiceNotReady:
             closeSocket();

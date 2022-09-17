@@ -23,7 +23,7 @@
 #include <map>
 #include <mutex>
 #include <boost/dynamic_bitset.hpp>
-#include <lib/PulsarApi.pb.h>
+#include "PulsarApiEnums.h"
 #include <algorithm>
 #include "LogUtils.h"
 #include <string>
@@ -57,10 +57,10 @@ class BatchAcknowledgementTracker {
     BatchAcknowledgementTracker(const std::string topic, const std::string subscription,
                                 const long consumerId);
 
-    bool isBatchReady(const MessageId& msgID, const proto::CommandAck_AckType ackType);
+    bool isBatchReady(const MessageId& msgID, const CommandAck_AckType ackType);
     const MessageId getGreatestCumulativeAckReady(const MessageId& messageId);
 
-    void deleteAckedMessage(const MessageId& messageId, proto::CommandAck_AckType ackType);
+    void deleteAckedMessage(const MessageId& messageId, CommandAck_AckType ackType);
     void receivedMessage(const Message& message);
 
     void clear();
