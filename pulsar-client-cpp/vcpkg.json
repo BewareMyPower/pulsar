@@ -12,6 +12,7 @@
     "boost-predef",
     "boost-program-options",
     "boost-property-tree",
+    "boost-python",
     "boost-random",
     "boost-serialization",
     "boost-xpressive",
@@ -22,6 +23,7 @@
     "zlib",
     "zstd",
     "log4cxx",
+    "python3",
     {
       "name": "dlfcn-win32",
       "platform": "windows"

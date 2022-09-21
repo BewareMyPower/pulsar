@@ -141,7 +141,7 @@ unset(OPENSSL_SSL_LIBRARIES CACHE)
 unset(OPENSSL_LIBRARIES CACHE)
 unset(OPENSSL_VERSION CACHE)
 
-if (LINK_STATIC)
+if (LINK_STATIC AND NOT VCPKG_TRIPLET)
     find_library(ZLIB_LIBRARIES REQUIRED NAMES libz.a z zlib)
     message(STATUS "ZLIB_LIBRARIES: ${ZLIB_LIBRARIES}")
     find_library(Protobuf_LIBRARIES NAMES libprotobuf.a libprotobuf)
@@ -182,6 +182,43 @@ if (LINK_STATIC)
 
     SET(Boost_USE_STATIC_LIBS   ON)
     SET(OPENSSL_USE_STATIC_LIBS TRUE)
+elseif (LINK_STATIC AND VCPKG_TRIPLET)
+    find_package(protobuf REQUIRED)
+    set(COMMON_LIBS ${Protobuf_LIBRARIES} ${COMMON_LIBS})
+    message(STATUS "Found protobuf: ${Protobuf_LIBRARIES}")
+    find_library(ZLIB_LIBRARY NAMES zlib)
+    if (ZLIB_LIBRARY)
+        message(STATUS "Found zlib: ${ZLIB_LIBRARY}")
+    else ()
+        message(FATAL_ERROR "Cannot find zlib")
+    endif ()
+    if (MSVC)
+        find_library(DLFCN_WIN32_LIBRARY NAMES dl)
+        if (DLFCN_WIN32_LIBRARY)
+            message(STATUS "Found dlfcn-win32: ${DLFCN_WIN32_LIBRARY}")
+        else ()
+            message(FATAL_ERROR "Cannot find dlfcn-win32")
+        endif ()
+    endif ()
+    find_library(CURL_LIBRARIES NAMES libcurl)
+    if (CURL_LIBRARIES)
+        set(COMMON_LIBS ${CURL_LIBRARIES} ${COMMON_LIBS})
+        message(STATUS "Found libcurl: ${CURL_LIBRARIES}")
+    else ()
+        message(FATAL_ERROR "Cannot find libcurl")
+    endif ()
+    if (USE_LOG4CXX)
+        find_package(log4cxx CONFIG REQUIRED)
+        set(COMMON_LIBS log4cxx ${COMMON_LIBS})
+    endif ()
+    find_library(LIB_ZSTD zstd)
+    if (LIB_ZSTD)
+        message(STATUS "Found ZSTD library: ${LIB_ZSTD}")
+    endif ()
+    find_library(LIB_SNAPPY NAMES snappy)
+    if (LIB_SNAPPY)
+        message(STATUS "Found Snappy library: ${LIB_SNAPPY}")
+    endif ()
 else()
     # Link to shared libraries
     find_package(ZLIB REQUIRED)
@@ -233,8 +270,7 @@ else()
         find_library(LOG4CXX_LIBRARY_PATH log4cxx)
         find_path(LOG4CXX_INCLUDE_PATH log4cxx/logger.h)
     endif (USE_LOG4CXX)
-endif (LINK_STATIC)
-
+endif ()
 
 find_package(Boost)
 
@@ -265,7 +301,18 @@ endif()
 
 find_package(Boost REQUIRED COMPONENTS ${BOOST_COMPONENTS})
 
-if (BUILD_PYTHON_WRAPPER)
+if (BUILD_PYTHON_WRAPPER AND VCPKG_TRIPLET)
+    find_package(PythonLibs REQUIRED)
+    MESSAGE(STATUS "PYTHON: " ${PYTHONLIBS_VERSION_STRING})
+
+    if (BOOST_PYTHON_NAME_POSTFIX)
+        find_package(Boost COMPONENTS python${BOOST_PYTHON_NAME_POSTFIX})
+    else ()
+        find_package(Boost COMPONENTS python310)
+    endif ()
+endif ()
+
+if (BUILD_PYTHON_WRAPPER AND NOT VCPKG_TRIPLET)
     find_package(PythonLibs REQUIRED)
     MESSAGE(STATUS "PYTHON: " ${PYTHONLIBS_VERSION_STRING})
 
@@ -290,7 +337,7 @@ if (BUILD_PYTHON_WRAPPER)
 
     MESSAGE(STATUS "BOOST_PYTHON_NAME_FOUND: " ${BOOST_PYTHON_NAME_FOUND})
     find_package(Boost REQUIRED COMPONENTS ${BOOST_PYTHON_NAME_FOUND})
-endif (BUILD_PYTHON_WRAPPER)
+endif ()
 
 find_package(OpenSSL REQUIRED)
 
@@ -351,7 +398,6 @@ include_directories(
 
 set(COMMON_LIBS
   ${COMMON_LIBS}
-  Threads::Threads
   ${Boost_REGEX_LIBRARY}
   ${Boost_SYSTEM_LIBRARY}
   ${CURL_LIBRARIES}
@@ -360,6 +406,9 @@ set(COMMON_LIBS
   ${ADDITIONAL_LIBRARIES}
   ${CMAKE_DL_LIBS}
 )
+if (NOT MSVC)
+  set(COMMON_LIBS Threads::Threads ${COMMON_LIBS})
+endif ()
 
 if (MSVC)
   set(COMMON_LIBS
