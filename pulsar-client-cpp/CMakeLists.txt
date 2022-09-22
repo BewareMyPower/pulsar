@@ -186,19 +186,11 @@ elseif (LINK_STATIC AND VCPKG_TRIPLET)
     find_package(protobuf REQUIRED)
     set(COMMON_LIBS ${Protobuf_LIBRARIES} ${COMMON_LIBS})
     message(STATUS "Found protobuf: ${Protobuf_LIBRARIES}")
-    find_library(ZLIB_LIBRARY NAMES zlib)
-    if (ZLIB_LIBRARY)
-        message(STATUS "Found zlib: ${ZLIB_LIBRARY}")
+    find_library(ZLIB_LIBRARIES NAMES zlib)
+    if (ZLIB_LIBRARIES)
+        message(STATUS "Found zlib: ${ZLIB_LIBRARIES}")
     else ()
         message(FATAL_ERROR "Cannot find zlib")
-    endif ()
-    if (MSVC)
-        find_library(DLFCN_WIN32_LIBRARY NAMES dl)
-        if (DLFCN_WIN32_LIBRARY)
-            message(STATUS "Found dlfcn-win32: ${DLFCN_WIN32_LIBRARY}")
-        else ()
-            message(FATAL_ERROR "Cannot find dlfcn-win32")
-        endif ()
     endif ()
     find_library(CURL_LIBRARIES NAMES libcurl)
     if (CURL_LIBRARIES)
@@ -406,24 +398,31 @@ set(COMMON_LIBS
   ${ADDITIONAL_LIBRARIES}
   ${CMAKE_DL_LIBS}
 )
-if (NOT MSVC)
-  set(COMMON_LIBS Threads::Threads ${COMMON_LIBS})
-endif ()
 
 if (MSVC)
-  set(COMMON_LIBS
-    ${COMMON_LIBS}
-    ${Boost_DATE_TIME_LIBRARY}
-  )
-endif()
-
-if (NOT MSVC)
-    set(COMMON_LIBS ${COMMON_LIBS} m)
+    set(COMMON_LIBS
+        ${COMMON_LIBS}
+        ${Boost_DATE_TIME_LIBRARY}
+        wldap32.lib
+        Normaliz.lib
+    )
+    if (LINK_STATIC)
+        # add external dependencies of libcurl
+        set(COMMON_LIBS ${COMMON_LIBS} ws2_32.lib crypt32.lib)
+        # the default compile options have /MD, which cannot be used to build DLLs that link static libraries
+        string(REGEX REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG ${CMAKE_CXX_FLAGS_DEBUG})
+        string(REGEX REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE ${CMAKE_CXX_FLAGS_RELEASE})
+        string(REGEX REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELWITHDEBINFO ${CMAKE_CXX_FLAGS_RELWITHDEBINFO})
+        message(STATUS "CMAKE_CXX_FLAGS_DEBUG: " ${CMAKE_CXX_FLAGS_DEBUG})
+        message(STATUS "CMAKE_CXX_FLAGS_RELEASE: " ${CMAKE_CXX_FLAGS_RELEASE})
+        message(STATUS "CMAKE_CXX_FLAGS_RELWITHDEBINFO: " ${CMAKE_CXX_FLAGS_RELWITHDEBINFO})
+    endif()
 else()
     set(COMMON_LIBS
-    ${COMMON_LIBS}
-    wldap32.lib
-    Normaliz.lib)
+        ${COMMON_LIBS}
+        Threads::Threads
+        m
+    )
 endif()
 
 if (USE_LOG4CXX)
