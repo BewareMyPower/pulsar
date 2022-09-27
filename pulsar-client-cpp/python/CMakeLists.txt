@@ -96,8 +96,18 @@ if (APPLE)
     set(CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS "${CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS} -undefined dynamic_lookup")
     target_link_libraries(_pulsar -Wl,-all_load pulsarStatic ${PYTHON_WRAPPER_LIBS} ${COMMON_LIBS} ${ICU_LIBS})
 else ()
-    if (NOT MSVC)
+    if (MSVC)
+      find_package(dlfcn-win32 REQUIRED)
+      set(CMAKE_DL_LIBS dlfcn-win32::dl psapi.lib)
+      add_definitions(-DBOOST_PYTHON_STATIC_LIB)
+      target_link_libraries(_pulsar pulsarStatic
+        dlfcn-win32::dl
+        psapi.lib
+        ${PYTHON_LIBRARIES}
+        ${PYTHON_WRAPPER_LIBS}
+        ${COMMON_LIBS})
+    else ()
       set (CMAKE_SHARED_LINKER_FLAGS " -static-libgcc  -static-libstdc++")
+      target_link_libraries(_pulsar pulsarStatic ${PYTHON_WRAPPER_LIBS} ${COMMON_LIBS})
     endif()
-    target_link_libraries(_pulsar pulsarStatic ${PYTHON_WRAPPER_LIBS} ${COMMON_LIBS})
 endif ()
