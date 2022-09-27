@@ -21,6 +21,7 @@ from setuptools import setup
 from distutils.core import Extension
 from distutils.util import strtobool
 from os import environ
+import platform
 
 from distutils.command import build_ext
 
@@ -56,6 +57,9 @@ NAME = get_name()
 print(VERSION)
 print(NAME)
 
+def is_windows():
+    return 'Windows' in platform.platform()
+
 
 # This is a workaround to have setuptools to include
 # the already compiled _pulsar.so library
@@ -64,12 +68,17 @@ class my_build_ext(build_ext.build_ext):
         import shutil
         import os.path
 
+        dest_path = self.get_ext_fullpath(ext.name)
+        if is_windows():
+            dest_path = dest_path[0:dest_path.rindex('.')] + '.dll'
         try:
-            os.makedirs(os.path.dirname(self.get_ext_fullpath(ext.name)))
+            os.makedirs(os.path.dirname(dest_path))
         except OSError as e:
             if e.errno != 17:  # already exists
                 raise
-        shutil.copyfile('_pulsar.so', self.get_ext_fullpath(ext.name))
+        binary = '_pulsar.dll' if is_windows() else '_pulsar.so'
+        print("copy file {} to {}".format(binary, dest_path))
+        shutil.copyfile(binary, dest_path)
 
 
 # Core Client dependencies
@@ -106,6 +115,7 @@ setup(
     packages=['pulsar', 'pulsar.schema', 'pulsar.functions'],
     cmdclass={'build_ext': my_build_ext},
     ext_modules=[Extension('_pulsar', [])],
+    setup_requires=['wheel'],
 
     author="Pulsar Devs",
     author_email="dev@pulsar.apache.org",
