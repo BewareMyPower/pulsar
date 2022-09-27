@@ -47,6 +47,14 @@ class BitSet {
     const_iterator end() const noexcept { return words_.begin() + wordsInUse_; }
 
     /**
+     * Returns true if this {@code BitSet} contains no bits that are set
+     * to {@code true}.
+     *
+     * @return boolean indicating whether this {@code BitSet} is empty
+     */
+    bool isEmpty() const noexcept { return wordsInUse_ == 0; }
+
+    /**
      * Sets the bits from the specified {@code fromIndex} (inclusive) to the
      * specified {@code toIndex} (exclusive) to {@code true}.
      *

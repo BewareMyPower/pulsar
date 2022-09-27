@@ -915,6 +915,15 @@ void ConsumerImpl::statsCallback(Result res, ResultCallback callback, proto::Com
 }
 
 void ConsumerImpl::acknowledgeAsync(const MessageId& msgId, ResultCallback callback) {
+    const auto state = state_.load();
+    if (state != State::Ready && state != State::Pending) {
+        consumerStatsBasePtr_->messageAcknowledged(ResultNotConnected, proto::CommandAck_AckType_Individual);
+        callback(ResultNotConnected);
+        return;
+    }
+
+    // TODO:
+
     ResultCallback cb = std::bind(&ConsumerImpl::statsCallback, shared_from_this(), std::placeholders::_1,
                                   callback, proto::CommandAck_AckType_Individual);
     if (msgId.batchIndex() != -1 &&
