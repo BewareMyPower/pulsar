@@ -21,8 +21,6 @@ package org.apache.pulsar.client.impl;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableMap.Builder;
 import com.google.common.collect.Lists;
 import io.netty.util.Timeout;
 import io.netty.util.TimerTask;
@@ -48,7 +46,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pulsar.client.api.BatchReceivePolicy;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerStats;
@@ -100,6 +97,8 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
 
     private volatile BatchMessageIdImpl startMessageId = null;
     private final long startMessageRollbackDurationInSec;
+    private Map<String, Consumer<T>> currentConsumers;
+
     MultiTopicsConsumerImpl(PulsarClientImpl client, ConsumerConfigurationData<T> conf,
             ExecutorProvider executorProvider, CompletableFuture<Consumer<T>> subscribeFuture, Schema<T> schema,
             ConsumerInterceptors<T> interceptors, boolean createTopicIfDoesNotExist) {
@@ -1481,30 +1480,14 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
 
     @Override
     public CompletableFuture<MessageId> getLastMessageIdAsync() {
-        CompletableFuture<MessageId> returnFuture = new CompletableFuture<>();
-
-        Map<String, CompletableFuture<MessageId>> messageIdFutures = consumers.entrySet().stream()
-            .map(entry -> Pair.of(entry.getKey(), entry.getValue().getLastMessageIdAsync()))
-            .collect(Collectors.toMap(Pair::getKey, Pair::getValue));
-
-        CompletableFuture
-            .allOf(messageIdFutures.values().toArray(new CompletableFuture<?>[0]))
-            .whenComplete((ignore, ex) -> {
-                Builder<String, MessageId> builder = ImmutableMap.builder();
-                messageIdFutures.forEach((key, future) -> {
-                    MessageId messageId;
-                    try {
-                        messageId = future.get();
-                    } catch (Exception e) {
-                        log.warn("[{}] Exception when topic {} getLastMessageId.", key, e);
-                        messageId = MessageId.earliest;
-                    }
-                    builder.put(key, messageId);
-                });
-                returnFuture.complete(new MultiMessageIdImpl(builder.build()));
-            });
-
-        return returnFuture;
+        final Map<String, Consumer<T>> currentConsumers = new HashMap<>(consumers);
+        final CompletableFuture<MessageId> future = new CompletableFuture<>();
+        if (currentConsumers.size() != 1) {
+            future.completeExceptionally(new PulsarClientException.NotSupportedException(
+                    consumerName + " has subscribed " + currentConsumers.size() + " consumers"));
+            return future;
+        }
+        return currentConsumers.values().stream().findFirst().get().getLastMessageIdAsync();
     }
 
     private static final Logger log = LoggerFactory.getLogger(MultiTopicsConsumerImpl.class);

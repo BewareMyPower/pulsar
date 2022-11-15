@@ -782,6 +782,8 @@ public interface Consumer<T> extends Closeable {
      * Get the last message id available for consume.
      *
      * @return a future that can be used to track the completion of the operation.
+     * @apiNote the returned future will be completed exceptionally if the consumer subscribes
+     *   multiple topics or partitions.
      */
     CompletableFuture<MessageId> getLastMessageIdAsync();
 
