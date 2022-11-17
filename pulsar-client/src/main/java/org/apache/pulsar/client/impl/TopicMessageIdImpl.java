@@ -19,8 +19,9 @@
 package org.apache.pulsar.client.impl;
 
 import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.api.TopicMessageId;
 
-public class TopicMessageIdImpl implements MessageId {
+public class TopicMessageIdImpl implements TopicMessageId {
 
     /** This topicPartitionName is get from ConsumerImpl, it contains partition part. */
     private final String topicPartitionName;
@@ -76,5 +77,10 @@ public class TopicMessageIdImpl implements MessageId {
     @Override
     public int compareTo(MessageId o) {
         return messageId.compareTo(o);
+    }
+
+    @Override
+    public String getOwnerTopic() {
+        return topicPartitionName;
     }
 }
