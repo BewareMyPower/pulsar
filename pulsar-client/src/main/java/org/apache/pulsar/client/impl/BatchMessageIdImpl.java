@@ -105,6 +105,7 @@ public class BatchMessageIdImpl extends MessageIdImpl {
         return toByteArray(batchIndex, batchSize);
     }
 
+    @Deprecated
     public boolean ackIndividual() {
         return acker.ackIndividual(batchIndex);
     }
@@ -113,14 +114,16 @@ public class BatchMessageIdImpl extends MessageIdImpl {
         return acker.ackCumulative(batchIndex);
     }
 
+    @Deprecated
     public int getOutstandingAcksInSameBatch() {
         return acker.getOutstandingAcks();
     }
 
     public int getBatchSize() {
-        return acker.getBatchSize();
+        return this.batchSize;
     }
 
+    @Deprecated
     public int getOriginalBatchSize() {
         return this.batchSize;
     }
