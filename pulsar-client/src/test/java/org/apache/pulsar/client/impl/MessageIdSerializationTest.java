@@ -21,6 +21,8 @@ package org.apache.pulsar.client.impl;
 import static org.testng.Assert.assertEquals;
 import java.io.IOException;
 import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.api.TopicMessageId;
+import org.apache.pulsar.client.api.TopicMessageIdSerDes;
 import org.testng.annotations.Test;
 
 public class MessageIdSerializationTest {
@@ -58,5 +60,28 @@ public class MessageIdSerializationTest {
     @Test(expectedExceptions = IOException.class)
     void testProtobufSerializationEmpty() throws Exception {
         MessageId.fromByteArray(new byte[0]);
+    }
+
+    @Test
+    public void testTopicMessageIdSerDes() throws Exception {
+        String topic = "persistent://public/default/my-topic";
+        MessageId id1 = new MessageIdImpl(1L, 2L, 3);
+        MessageId id2 = new BatchMessageIdImpl(1L, 2L, 3, 4);
+
+        TopicMessageId topicMessageId1 = convert(topic, id1);
+        assertEquals(topicMessageId1.getOwnerTopic(), topic);
+        assertEquals(topicMessageId1.toByteArray(), id1.toByteArray());
+
+        TopicMessageId topicMessageId2 = convert(topic, id2);
+        assertEquals(topicMessageId2.getOwnerTopic(), topic);
+        assertEquals(topicMessageId2.toByteArray(), id2.toByteArray());
+    }
+
+    private static TopicMessageId convert(String topic, MessageId messageId) throws IOException {
+        return TopicMessageIdSerDes.deserialize(
+                TopicMessageIdSerDes.serialize(
+                        TopicMessageId.create(topic, messageId)
+                )
+        );
     }
 }
