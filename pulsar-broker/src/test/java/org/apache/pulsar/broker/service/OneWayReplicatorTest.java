@@ -88,9 +88,7 @@ import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.apache.pulsar.common.policies.data.TopicStats;
 import org.apache.pulsar.common.policies.data.impl.AutoTopicCreationOverrideImpl;
 import org.apache.pulsar.common.util.FutureUtil;
-import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
 import org.awaitility.Awaitility;
-import org.awaitility.reflect.WhiteboxImpl;
 import org.mockito.Mockito;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -287,8 +285,7 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
         });
 
         // Inject spy client.
-        ConcurrentOpenHashMap<String, PulsarClient>
-                replicationClients = WhiteboxImpl.getInternalState(brokerService, "replicationClients");
+        final var replicationClients = brokerService.getReplicationClients();
         PulsarClientImpl internalClient = (PulsarClientImpl) replicationClients.get(cluster2);
         PulsarClient spyClient = spy(internalClient);
         assertTrue(replicationClients.remove(cluster2, internalClient));
@@ -1134,9 +1131,9 @@ public class OneWayReplicatorTest extends OneWayReplicatorTestBase {
             return t.startsWith(tp);
         };
         Awaitility.await().untilAsserted(() -> {
-            List<String> topics1 = pulsar1.getBrokerService().getTopics().keys()
+            List<String> topics1 = pulsar1.getBrokerService().getTopics().keySet()
                     .stream().filter(topicNameFilter).collect(Collectors.toList());
-            List<String> topics2 = pulsar2.getBrokerService().getTopics().keys()
+            List<String> topics2 = pulsar2.getBrokerService().getTopics().keySet()
                     .stream().filter(topicNameFilter).collect(Collectors.toList());
             Collections.sort(topics1);
             Collections.sort(topics2);

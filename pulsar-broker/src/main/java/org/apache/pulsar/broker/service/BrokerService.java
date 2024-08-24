@@ -63,6 +63,7 @@ import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
@@ -176,8 +177,6 @@ import org.apache.pulsar.common.stats.Metrics;
 import org.apache.pulsar.common.util.FieldParser;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.common.util.GracefulExecutorServicesShutdown;
-import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
-import org.apache.pulsar.common.util.collections.ConcurrentOpenHashSet;
 import org.apache.pulsar.common.util.netty.ChannelFutures;
 import org.apache.pulsar.common.util.netty.EventLoopUtil;
 import org.apache.pulsar.common.util.netty.NettyFutureUtil;
@@ -216,27 +215,25 @@ public class BrokerService implements Closeable {
     private final PulsarService pulsar;
     private final ManagedLedgerFactory managedLedgerFactory;
 
-    private final ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> topics;
-
-    private final ConcurrentOpenHashMap<String, PulsarClient> replicationClients;
-    private final ConcurrentOpenHashMap<String, PulsarAdmin> clusterAdmins;
+    private final ConcurrentHashMap<String, CompletableFuture<Optional<Topic>>> topics;
+    private final ConcurrentHashMap<String, PulsarClient> replicationClients;
+    private final ConcurrentHashMap<String, PulsarAdmin> clusterAdmins;
 
     // Multi-layer topics map:
     // Namespace --> Bundle --> topicName --> topic
-    private final ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, Topic>>>
-            multiLayerTopicsMap;
+    private final ConcurrentHashMap<String, ConcurrentHashMap<String, ConcurrentHashMap<String, Topic>>>
+            multiLayerTopicMap;
     // Keep track of topics and partitions served by this broker for fast lookup.
-    @Getter
-    private final ConcurrentOpenHashMap<String, ConcurrentOpenHashSet<Integer>> owningTopics;
+    private final ConcurrentHashMap<String, ConcurrentHashMap<Integer, Boolean>> owningTopics;
     private long numberOfNamespaceBundles = 0;
 
     private final EventLoopGroup acceptorGroup;
     private final EventLoopGroup workerGroup;
     private final OrderedExecutor topicOrderedExecutor;
     // offline topic backlog cache
-    private final ConcurrentOpenHashMap<TopicName, PersistentOfflineTopicStats> offlineTopicStatCache;
-    private final ConcurrentOpenHashMap<String, ConfigField> dynamicConfigurationMap;
-    private final ConcurrentOpenHashMap<String, Consumer<?>> configRegisteredListeners;
+    private final ConcurrentHashMap<TopicName, PersistentOfflineTopicStats> offlineTopicStatCache;
+    private final ConcurrentHashMap<String, ConfigField> dynamicConfigurationMap;
+    private final ConcurrentHashMap<String, Consumer<?>> configRegisteredListeners;
 
     private final ConcurrentLinkedQueue<TopicLoadingContext> pendingTopicLoadingQueue;
 
@@ -295,7 +292,7 @@ public class BrokerService implements Closeable {
     private final int maxUnackedMessages;
     public final int maxUnackedMsgsPerDispatcher;
     private final AtomicBoolean blockedDispatcherOnHighUnackedMsgs = new AtomicBoolean(false);
-    private final ConcurrentOpenHashSet<PersistentDispatcherMultipleConsumers> blockedDispatchers;
+    private final ConcurrentHashMap<PersistentDispatcherMultipleConsumers, Boolean> blockedDispatchers;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     @VisibleForTesting
     private final DelayedDeliveryTrackerFactory delayedDeliveryTrackerFactory;
@@ -332,28 +329,17 @@ public class BrokerService implements Closeable {
         this.preciseTopicPublishRateLimitingEnable =
                 pulsar.getConfiguration().isPreciseTopicPublishRateLimiterEnable();
         this.managedLedgerFactory = pulsar.getManagedLedgerFactory();
-        this.topics =
-                ConcurrentOpenHashMap.<String, CompletableFuture<Optional<Topic>>>newBuilder()
-                .build();
-        this.replicationClients =
-                ConcurrentOpenHashMap.<String, PulsarClient>newBuilder().build();
-        this.clusterAdmins =
-                ConcurrentOpenHashMap.<String, PulsarAdmin>newBuilder().build();
+        this.topics = new ConcurrentHashMap<>();
+        this.replicationClients = new ConcurrentHashMap<>();
+        this.clusterAdmins = new ConcurrentHashMap<>();
         this.keepAliveIntervalSeconds = pulsar.getConfiguration().getKeepAliveIntervalSeconds();
-        this.configRegisteredListeners =
-                ConcurrentOpenHashMap.<String, Consumer<?>>newBuilder().build();
+        this.configRegisteredListeners = new ConcurrentHashMap<>();
         this.pendingTopicLoadingQueue = Queues.newConcurrentLinkedQueue();
 
-        this.multiLayerTopicsMap = ConcurrentOpenHashMap.<String,
-                ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, Topic>>>newBuilder()
-                .build();
-        this.owningTopics = ConcurrentOpenHashMap.<String,
-                ConcurrentOpenHashSet<Integer>>newBuilder()
-                .build();
+        this.multiLayerTopicMap = new ConcurrentHashMap<>();
+        this.owningTopics = new ConcurrentHashMap<>();
         this.pulsarStats = new PulsarStats(pulsar);
-        this.offlineTopicStatCache =
-                ConcurrentOpenHashMap.<TopicName,
-                        PersistentOfflineTopicStats>newBuilder().build();
+        this.offlineTopicStatCache = new ConcurrentHashMap<>();
 
         this.topicOrderedExecutor = OrderedExecutor.newBuilder()
                 .numThreads(pulsar.getConfiguration().getTopicOrderedExecutorThreadNum())
@@ -399,8 +385,7 @@ public class BrokerService implements Closeable {
                 .numThreads(1)
                 .build();
         this.authenticationService = new AuthenticationService(pulsar.getConfiguration());
-        this.blockedDispatchers =
-                ConcurrentOpenHashSet.<PersistentDispatcherMultipleConsumers>newBuilder().build();
+        this.blockedDispatchers = new ConcurrentHashMap<>();
         this.topicFactory = createPersistentTopicFactory();
         // update dynamic configuration and register-listener
         updateConfigurationAndRegisterListeners();
@@ -496,7 +481,7 @@ public class BrokerService implements Closeable {
 
     public void addTopicEventListener(TopicEventsListener... listeners) {
         topicEventsDispatcher.addTopicEventListener(listeners);
-        getTopics().keys().forEach(topic ->
+        getTopics().keySet().forEach(topic ->
                 TopicEventsDispatcher.notify(listeners, topic, TopicEvent.LOAD, EventStage.SUCCESS, null));
     }
 
@@ -568,13 +553,9 @@ public class BrokerService implements Closeable {
     }
 
     public Map<String, TopicStatsImpl> getTopicStats(NamespaceBundle bundle) {
-        ConcurrentOpenHashMap<String, Topic> topicMap = getMultiLayerTopicMap()
-                .computeIfAbsent(bundle.getNamespaceObject().toString(), k -> {
-                    return ConcurrentOpenHashMap
-                            .<String, ConcurrentOpenHashMap<String, Topic>>newBuilder().build();
-                }).computeIfAbsent(bundle.toString(), k -> {
-                    return ConcurrentOpenHashMap.<String, Topic>newBuilder().build();
-                });
+        final var topicMap = multiLayerTopicMap
+                .computeIfAbsent(bundle.getNamespaceObject().toString(), __ -> new ConcurrentHashMap<>())
+                .computeIfAbsent(bundle.toString(), __ -> new ConcurrentHashMap<>());
 
         Map<String, TopicStatsImpl> topicStatsMap = new HashMap<>();
         topicMap.forEach((name, topic) -> {
@@ -1204,7 +1185,7 @@ public class BrokerService implements Closeable {
             // v2 topics have a global name so check if the topic is replicated.
             if (t.isReplicated()) {
                 // Delete is disallowed on global topic
-                final List<String> clusters = t.getReplicators().keys();
+                final var clusters = t.getReplicators().keySet().stream().toList();
                 log.error("Delete forbidden topic {} is replicated on clusters {}", topic, clusters);
                 return FutureUtil.failedFuture(
                         new IllegalStateException("Delete forbidden topic is replicated on clusters " + clusters));
@@ -1212,7 +1193,7 @@ public class BrokerService implements Closeable {
 
             // shadow topic should be deleted first.
             if (t.isShadowReplicated()) {
-                final List<String> shadowTopics = t.getShadowReplicators().keys();
+                final var shadowTopics = t.getShadowReplicators().keySet().stream().toList();
                 log.error("Delete forbidden. Topic {} is replicated to shadow topics: {}", topic, shadowTopics);
                 return FutureUtil.failedFuture(new IllegalStateException(
                         "Delete forbidden. Topic " + topic + " is replicated to shadow topics."));
@@ -2054,15 +2035,11 @@ public class BrokerService implements Closeable {
         pulsar.getNamespaceService().getBundleAsync(topicName)
                 .thenAccept(namespaceBundle -> {
                     if (namespaceBundle != null) {
-                        synchronized (multiLayerTopicsMap) {
+                        synchronized (multiLayerTopicMap) {
                             String serviceUnit = namespaceBundle.toString();
-                            multiLayerTopicsMap //
-                                    .computeIfAbsent(topicName.getNamespace(),
-                                            k -> ConcurrentOpenHashMap.<String,
-                                                    ConcurrentOpenHashMap<String, Topic>>newBuilder()
-                                                    .build()) //
-                                    .computeIfAbsent(serviceUnit,
-                                            k -> ConcurrentOpenHashMap.<String, Topic>newBuilder().build()) //
+                            multiLayerTopicMap.computeIfAbsent(topicName.getNamespace(), __
+                                    -> new ConcurrentHashMap<>()
+                            ).computeIfAbsent(serviceUnit, __ -> new ConcurrentHashMap<>())
                                     .put(topicName.toString(), topic);
                         }
                     }
@@ -2086,8 +2063,8 @@ public class BrokerService implements Closeable {
                     addTopicToStatsMaps(TopicName.get(t.getName()), t);
                 });
                 // remove old bundle from the map
-                synchronized (multiLayerTopicsMap) {
-                    multiLayerTopicsMap.get(oldBundle.getNamespaceObject().toString()).remove(oldBundle.toString());
+                synchronized (multiLayerTopicMap) {
+                    multiLayerTopicMap.get(oldBundle.getNamespaceObject().toString()).remove(oldBundle.toString());
                     pulsarStats.invalidBundleStats(oldBundle.toString());
                 }
             }
@@ -2127,7 +2104,7 @@ public class BrokerService implements Closeable {
 
     public void updateRates() {
         synchronized (pulsarStats) {
-            pulsarStats.updateStats(multiLayerTopicsMap);
+            pulsarStats.updateStats(multiLayerTopicMap);
 
             Summary.rotateLatencyCollection();
         }
@@ -2362,7 +2339,7 @@ public class BrokerService implements Closeable {
     }
 
     public void cleanUnloadedTopicFromCache(NamespaceBundle serviceUnit) {
-        for (String topic : topics.keys()) {
+        for (String topic : topics.keySet()) {
             TopicName topicName = TopicName.get(topic);
             if (serviceUnit.includes(topicName) && getTopicReference(topic).isPresent()) {
                 log.info("[{}][{}] Clean unloaded topic from cache.", serviceUnit.toString(), topic);
@@ -2426,11 +2403,10 @@ public class BrokerService implements Closeable {
 
         topicEventsDispatcher.notify(topic, TopicEvent.UNLOAD, EventStage.BEFORE);
 
-        synchronized (multiLayerTopicsMap) {
-            ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, Topic>> namespaceMap = multiLayerTopicsMap
-                    .get(namespaceName);
+        synchronized (multiLayerTopicMap) {
+            final var namespaceMap = multiLayerTopicMap.get(namespaceName);
             if (namespaceMap != null) {
-                ConcurrentOpenHashMap<String, Topic> bundleMap = namespaceMap.get(bundleName);
+                final var bundleMap = namespaceMap.get(bundleName);
                 if (bundleMap != null) {
                     bundleMap.remove(topic);
                     if (bundleMap.isEmpty()) {
@@ -2439,13 +2415,12 @@ public class BrokerService implements Closeable {
                 }
 
                 if (namespaceMap.isEmpty()) {
-                    multiLayerTopicsMap.remove(namespaceName);
+                    multiLayerTopicMap.remove(namespaceName);
                     final ClusterReplicationMetrics clusterReplicationMetrics = pulsarStats
                             .getClusterReplicationMetrics();
-                    replicationClients.forEach((cluster, client) -> {
+                    replicationClients.keySet().forEach(cluster ->
                         clusterReplicationMetrics.remove(clusterReplicationMetrics.getKeyName(namespaceName,
-                                cluster));
-                    });
+                                cluster)));
                 }
             }
         }
@@ -2465,16 +2440,11 @@ public class BrokerService implements Closeable {
 
     public long getNumberOfNamespaceBundles() {
         this.numberOfNamespaceBundles = 0;
-        this.multiLayerTopicsMap.forEach((namespaceName, bundles) -> {
+        this.multiLayerTopicMap.forEach((namespaceName, bundles) -> {
             this.numberOfNamespaceBundles += bundles.size();
         });
         return this.numberOfNamespaceBundles;
     }
-
-    public ConcurrentOpenHashMap<String, CompletableFuture<Optional<Topic>>> getTopics() {
-        return topics;
-    }
-
 
     private void handleMetadataChanges(Notification n) {
         if (n.getType() == NotificationType.Modified && NamespaceResources.pathIsFromNamespace(n.getPath())) {
@@ -2669,10 +2639,6 @@ public class BrokerService implements Closeable {
         return workerGroup;
     }
 
-    public ConcurrentOpenHashMap<String, PulsarClient> getReplicationClients() {
-        return replicationClients;
-    }
-
     public boolean isAuthenticationEnabled() {
         return pulsar.getConfiguration().isAuthenticationEnabled();
     }
@@ -2702,17 +2668,17 @@ public class BrokerService implements Closeable {
     }
 
     public List<Topic> getAllTopicsFromNamespaceBundle(String namespace, String bundle) {
-        ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, Topic>> map1 = multiLayerTopicsMap.get(namespace);
+        final var map1 = multiLayerTopicMap.get(namespace);
         if (map1 == null) {
             return Collections.emptyList();
         }
 
-        ConcurrentOpenHashMap<String, Topic> map2 = map1.get(bundle);
+        final var map2 = map1.get(bundle);
         if (map2 == null) {
             return Collections.emptyList();
         }
 
-        return map2.values();
+        return new ArrayList<>(map2.values());
     }
 
     /**
@@ -3137,16 +3103,7 @@ public class BrokerService implements Closeable {
     }
 
     public List<String> getDynamicConfiguration() {
-        return dynamicConfigurationMap.keys();
-    }
-
-    public Map<String, String> getRuntimeConfiguration() {
-        Map<String, String> configMap = new HashMap<>();
-        ConcurrentOpenHashMap<String, Object> runtimeConfigurationMap = getRuntimeConfigurationMap();
-        runtimeConfigurationMap.forEach((key, value) -> {
-            configMap.put(key, String.valueOf(value));
-        });
-        return configMap;
+        return new ArrayList<>(dynamicConfigurationMap.keySet());
     }
 
     public boolean isDynamicConfiguration(String key) {
@@ -3160,9 +3117,8 @@ public class BrokerService implements Closeable {
         return true;
     }
 
-    private ConcurrentOpenHashMap<String, ConfigField> prepareDynamicConfigurationMap() {
-        ConcurrentOpenHashMap<String, ConfigField> dynamicConfigurationMap =
-                ConcurrentOpenHashMap.<String, ConfigField>newBuilder().build();
+    private ConcurrentHashMap<String, ConfigField> prepareDynamicConfigurationMap() {
+        final var dynamicConfigurationMap = new ConcurrentHashMap<String, ConfigField>();
         try {
             for (Field field : ServiceConfiguration.class.getDeclaredFields()) {
                 if (field != null && field.isAnnotationPresent(FieldContext.class)) {
@@ -3181,15 +3137,15 @@ public class BrokerService implements Closeable {
         return dynamicConfigurationMap;
     }
 
-    private ConcurrentOpenHashMap<String, Object> getRuntimeConfigurationMap() {
-        ConcurrentOpenHashMap<String, Object> runtimeConfigurationMap =
-                ConcurrentOpenHashMap.<String, Object>newBuilder().build();
+    public HashMap<String, String> getRuntimeConfiguration() {
+        final var runtimeConfigurationMap = new HashMap<String, String>();
         for (Field field : ServiceConfiguration.class.getDeclaredFields()) {
             if (field != null && field.isAnnotationPresent(FieldContext.class)) {
                 field.setAccessible(true);
                 try {
-                    Object configValue = field.get(pulsar.getConfiguration());
-                    runtimeConfigurationMap.put(field.getName(), configValue == null ? "" : configValue);
+                    Object configValue = String.valueOf(field.get(pulsar.getConfiguration()));
+                    runtimeConfigurationMap.put(field.getName(),
+                            configValue == null ? "" : String.valueOf(configValue));
                 } catch (Exception e) {
                     log.error("Failed to get value of field {}, {}", field.getName(), e.getMessage());
                 }
@@ -3346,11 +3302,6 @@ public class BrokerService implements Closeable {
         return topicOrderedExecutor;
     }
 
-    public ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, ConcurrentOpenHashMap<String, Topic>>>
-    getMultiLayerTopicMap() {
-        return multiLayerTopicsMap;
-    }
-
     /**
      * If per-broker unacked message reached to limit then it blocks dispatcher if its unacked message limit has been
      * reached to {@link #maxUnackedMsgsPerDispatcher}.
@@ -3372,7 +3323,7 @@ public class BrokerService implements Closeable {
                     log.info("[{}] dispatcher reached to max unack msg limit on blocked-broker {}",
                             dispatcher.getName(), dispatcher.getTotalUnackedMessages());
                     dispatcher.blockDispatcherOnUnackedMsgs();
-                    blockedDispatchers.add(dispatcher);
+                    blockedDispatchers.put(dispatcher, true);
                 } finally {
                     lock.readLock().unlock();
                 }
@@ -3402,7 +3353,7 @@ public class BrokerService implements Closeable {
         } else if (blockedDispatcherOnHighUnackedMsgs.get() && unAckedMessages < maxUnackedMessages / 2) {
             // unblock broker-dispatching if received enough acked messages back
             if (blockedDispatcherOnHighUnackedMsgs.compareAndSet(true, false)) {
-                unblockDispatchersOnUnAckMessages(blockedDispatchers.values());
+                unblockDispatchersOnUnAckMessages(new ArrayList<>(blockedDispatchers.keySet()));
             }
         }
 
@@ -3426,7 +3377,7 @@ public class BrokerService implements Closeable {
                             log.info("[{}] Blocking dispatcher due to reached max broker limit {}",
                                     dispatcher.getName(), dispatcher.getTotalUnackedMessages());
                             dispatcher.blockDispatcherOnUnackedMsgs();
-                            blockedDispatchers.add(dispatcher);
+                            blockedDispatchers.put(dispatcher, true);
                         }
                     }
                 });
