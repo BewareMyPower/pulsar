@@ -77,4 +77,21 @@ public interface TopicCompactionService extends AutoCloseable {
     * @return the first entry that greater or equal to target entryIndex, this entry can be null.
     */
     CompletableFuture<Entry> findEntryByEntryIndex(long entryIndex);
+
+    /**
+     * Get the last message's position of the original topic.
+     */
+    CompletableFuture<MessagePosition> getLastMessagePosition();
+
+    /**
+     * The position of a message.
+     * It adds a new field to {@link Position} that represents the batch index of the message in the entry. The batch
+     * index is -1 for a non-batched message or a non-positive integer when the entry is a batched message.
+     */
+    record MessagePosition(long ledgerId, long entryId, int batchIndex) {
+
+        public static final MessagePosition EARLIEST = new MessagePosition(-1L, -1L, -1);
+        public static final CompletableFuture<MessagePosition> EARLIEST_FUTURE =
+                CompletableFuture.completedFuture(EARLIEST);
+    }
 }
