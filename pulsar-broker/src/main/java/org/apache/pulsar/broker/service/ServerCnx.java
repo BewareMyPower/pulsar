@@ -2255,7 +2255,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
             topic.checkIfTransactionBufferRecoverCompletely().whenComplete((__, e) -> {
                 if (e != null) {
                     writeAndFlush(Commands.newError(requestId, ServerError.UnknownError,
-                            "Failed to recover Transaction Buffer: " + e.getMessage()));
+                            "Failed to recover Transaction Buffer."));
                     return;
                 }
                 topic.getLastDispatchablePosition().thenCompose(lastPosition -> {
