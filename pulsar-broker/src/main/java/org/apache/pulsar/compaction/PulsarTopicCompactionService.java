@@ -36,7 +36,6 @@ import javax.annotation.Nonnull;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.Position;
-import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 import org.apache.pulsar.common.api.proto.CompressionType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.api.proto.SingleMessageMetadata;
@@ -118,18 +117,6 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
     public CompletableFuture<Entry> findEntryByPublishTime(long publishTime) {
         final Predicate<Entry> predicate = entry -> {
             return Commands.parseMessageMetadata(entry.getDataBuffer()).getPublishTime() >= publishTime;
-        };
-        return compactedTopic.findFirstMatchEntry(predicate);
-    }
-
-    @Override
-    public CompletableFuture<Entry> findEntryByEntryIndex(long entryIndex) {
-        final Predicate<Entry> predicate = entry -> {
-            BrokerEntryMetadata brokerEntryMetadata = Commands.parseBrokerEntryMetadataIfExist(entry.getDataBuffer());
-            if (brokerEntryMetadata == null || !brokerEntryMetadata.hasIndex()) {
-                return false;
-            }
-            return brokerEntryMetadata.getIndex() >= entryIndex;
         };
         return compactedTopic.findFirstMatchEntry(predicate);
     }
