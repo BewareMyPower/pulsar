@@ -149,6 +149,7 @@ import org.apache.pulsar.common.util.DateFormatter;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 import org.apache.pulsar.compaction.Compactor;
+import org.apache.pulsar.compaction.TopicCompactionService;
 import org.apache.pulsar.metadata.api.MetadataStoreException;
 import org.apache.pulsar.transaction.coordinator.TransactionCoordinatorID;
 import org.slf4j.Logger;
@@ -2809,21 +2810,14 @@ public class PersistentTopicsBase extends AdminResource {
                 }
                 final PersistentTopic persistentTopic = (PersistentTopic) topic;
 
-                return persistentTopic.getTopicCompactionService().readLastCompactedEntry().thenCompose(lastEntry -> {
-                    if (lastEntry == null) {
+                return persistentTopic.getTopicCompactionService().getLastMessagePosition().thenCompose(position -> {
+                    if (position == TopicCompactionService.MessagePosition.EARLIEST) {
                         return findMessageIdByPublishTime(timestamp, persistentTopic.getManagedLedger());
                     }
-                    MessageMetadata metadata;
-                    Position position = lastEntry.getPosition();
-                    try {
-                        metadata = Commands.parseMessageMetadata(lastEntry.getDataBuffer());
-                    } finally {
-                        lastEntry.release();
-                    }
-                    if (timestamp == metadata.getPublishTime()) {
-                        return CompletableFuture.completedFuture(new MessageIdImpl(position.getLedgerId(),
-                                position.getEntryId(), topicName.getPartitionIndex()));
-                    } else if (timestamp < metadata.getPublishTime()) {
+                    if (timestamp == position.publishTime()) {
+                        return CompletableFuture.completedFuture(new MessageIdImpl(position.ledgerId(),
+                                position.entryId(), topicName.getPartitionIndex()));
+                    } else if (timestamp < position.publishTime()) {
                         return persistentTopic.getTopicCompactionService().findEntryByPublishTime(timestamp)
                                 .thenApply(compactedEntry -> {
                                     try {

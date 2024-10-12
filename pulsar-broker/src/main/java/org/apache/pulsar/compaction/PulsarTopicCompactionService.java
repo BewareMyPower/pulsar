@@ -105,8 +105,7 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
         return resultFuture;
     }
 
-    @Override
-    public CompletableFuture<Entry> readLastCompactedEntry() {
+    private CompletableFuture<Entry> readLastCompactedEntry() {
         return compactedTopic.readLastEntryOfCompactedLedger();
     }
 
@@ -157,7 +156,8 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
                 MessageMetadata metadata = Commands.parseMessageMetadata(payload);
                 try {
                     final var batchIndex = calculateTheLastBatchIndexInBatch(metadata, payload);
-                    return new MessagePosition(entry.getLedgerId(), entry.getEntryId(), batchIndex);
+                    final var publishTime = metadata.getPublishTime();
+                    return new MessagePosition(entry.getLedgerId(), entry.getEntryId(), batchIndex, publishTime);
                 } catch (IOException e) {
                     throw new CompletionException(new IOException("Failed to deserialize batched message from "
                             + "the last entry of the compacted ledger: " + e.getMessage()));

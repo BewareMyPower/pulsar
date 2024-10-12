@@ -48,13 +48,6 @@ public interface TopicCompactionService extends AutoCloseable {
     CompletableFuture<List<Entry>> readCompactedEntries(@Nonnull Position startPosition, int numberOfEntriesToRead);
 
     /**
-     * Read the last compacted entry from the TopicCompactionService.
-     *
-     * @return a future that will be completed with the compacted last entry, this entry can be null.
-     */
-    CompletableFuture<Entry> readLastCompactedEntry();
-
-    /**
      * Get the last compacted position from the TopicCompactionService.
      *
      * @return a future that will be completed with the last compacted position, this position can be null.
@@ -80,6 +73,7 @@ public interface TopicCompactionService extends AutoCloseable {
 
     /**
      * Get the last message's position of the original topic.
+     * {@link MessagePosition#EARLIEST} will be returned if the last message does not exist.
      */
     CompletableFuture<MessagePosition> getLastMessagePosition();
 
@@ -88,9 +82,9 @@ public interface TopicCompactionService extends AutoCloseable {
      * It adds a new field to {@link Position} that represents the batch index of the message in the entry. The batch
      * index is -1 for a non-batched message or a non-positive integer when the entry is a batched message.
      */
-    record MessagePosition(long ledgerId, long entryId, int batchIndex) {
+    record MessagePosition(long ledgerId, long entryId, int batchIndex, long publishTime) {
 
-        public static final MessagePosition EARLIEST = new MessagePosition(-1L, -1L, -1);
+        public static final MessagePosition EARLIEST = new MessagePosition(-1L, -1L, -1, 0L);
         public static final CompletableFuture<MessagePosition> EARLIEST_FUTURE =
                 CompletableFuture.completedFuture(EARLIEST);
     }

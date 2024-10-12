@@ -2339,7 +2339,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 MessageMetadata metadata = Commands.parseMessageMetadata(entry.getDataBuffer());
                 final var batchSize = metadata.hasNumMessagesInBatch() ? metadata.getNumMessagesInBatch() : 0;
                 return new TopicCompactionService.MessagePosition(entry.getLedgerId(), entry.getEntryId(),
-                        batchSize - 1);
+                        batchSize - 1, metadata.getPublishTime());
             } finally {
                 entry.release();
             }
