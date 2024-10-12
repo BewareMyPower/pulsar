@@ -30,12 +30,12 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.function.Predicate;
 import java.util.function.Supplier;
 import javax.annotation.Nonnull;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.Position;
+import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.pulsar.common.api.proto.CompressionType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.api.proto.SingleMessageMetadata;
@@ -114,11 +114,10 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
     }
 
     @Override
-    public CompletableFuture<Entry> findEntryByPublishTime(long publishTime) {
-        final Predicate<Entry> predicate = entry -> {
-            return Commands.parseMessageMetadata(entry.getDataBuffer()).getPublishTime() >= publishTime;
-        };
-        return compactedTopic.findFirstMatchEntry(predicate);
+    public CompletableFuture<Position> findPositionByPublishTime(long publishTime) {
+        return compactedTopic.findFirstMatchEntry(entry ->
+                Commands.parseMessageMetadata(entry.getDataBuffer()).getPublishTime() > publishTime
+        ).thenApply(entry -> entry != null ? entry.getPosition() : PositionFactory.EARLIEST);
     }
 
     public CompactedTopicImpl getCompactedTopic() {

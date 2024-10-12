@@ -2818,15 +2818,9 @@ public class PersistentTopicsBase extends AdminResource {
                         return CompletableFuture.completedFuture(new MessageIdImpl(position.ledgerId(),
                                 position.entryId(), topicName.getPartitionIndex()));
                     } else if (timestamp < position.publishTime()) {
-                        return persistentTopic.getTopicCompactionService().findEntryByPublishTime(timestamp)
-                                .thenApply(compactedEntry -> {
-                                    try {
-                                        return new MessageIdImpl(compactedEntry.getLedgerId(),
-                                                compactedEntry.getEntryId(), topicName.getPartitionIndex());
-                                    } finally {
-                                        compactedEntry.release();
-                                    }
-                                });
+                        return persistentTopic.getTopicCompactionService().findPositionByPublishTime(timestamp)
+                                .thenApply(__ -> new MessageIdImpl(__.getLedgerId(), __.getEntryId(),
+                                        topicName.getPartitionIndex()));
                     } else {
                         return findMessageIdByPublishTime(timestamp, persistentTopic.getManagedLedger());
                     }

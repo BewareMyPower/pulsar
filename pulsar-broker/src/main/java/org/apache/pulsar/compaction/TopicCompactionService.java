@@ -49,18 +49,21 @@ public interface TopicCompactionService extends AutoCloseable {
 
     /**
      * Get the last compacted position from the TopicCompactionService.
-     *
+     * <p>
+     * The position is the mark-delete position of the original topic when the last compaction was performed.
+     * </p>
      * @return a future that will be completed with the last compacted position, this position can be null.
      */
     CompletableFuture<Position> getLastCompactedPosition();
 
     /**
-    * Find the first entry that greater or equal to target publishTime.
+    * Find the first entry's position that is greater or equal to target publishTime.
     *
     * @param publishTime  the publish time of entry.
-    * @return the first entry metadata that greater or equal to target publishTime, this entry can be null.
+    * @return the first entry's position that is greater or equal to target publishTime or
+    *   {@link org.apache.bookkeeper.mledger.PositionFactory#EARLIEST} if the entry does not exist
     */
-    CompletableFuture<Entry> findEntryByPublishTime(long publishTime);
+    CompletableFuture<Position> findPositionByPublishTime(long publishTime);
 
     /**
      * Get the last message's position of the original topic.
