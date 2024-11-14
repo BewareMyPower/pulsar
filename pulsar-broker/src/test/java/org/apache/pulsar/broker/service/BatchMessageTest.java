@@ -1033,7 +1033,6 @@ public class BatchMessageTest extends BrokerTestBase {
                 .isAckReceiptEnabled(true)
                 .subscriptionName(subscriptionName)
                 .subscriptionType(subType)
-                .enableBatchIndexAcknowledgment(true)
                 .subscribe();
 
         @Cleanup

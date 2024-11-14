@@ -73,7 +73,6 @@ public class SubscriptionSeekTest extends BrokerTestBase {
     @Override
     protected void setup() throws Exception {
         super.baseSetup();
-        conf.setAcknowledgmentAtBatchIndexLevelEnabled(true);
     }
 
     @AfterClass(alwaysRun = true)
