@@ -327,7 +327,6 @@ public class NegativeAcksTest extends ProducerConsumerBase {
     @Test
     public void testNegativeAcksWithBatchAckEnabled() throws Exception {
         cleanup();
-        conf.setAcknowledgmentAtBatchIndexLevelEnabled(true);
         setup();
         String topic = BrokerTestUtil.newUniqueName("testNegativeAcksWithBatchAckEnabled");
 
@@ -337,7 +336,6 @@ public class NegativeAcksTest extends ProducerConsumerBase {
                 .subscriptionName("sub1")
                 .acknowledgmentGroupTime(0, TimeUnit.SECONDS)
                 .subscriptionType(SubscriptionType.Shared)
-                .enableBatchIndexAcknowledgment(true)
                 .negativeAckRedeliveryDelay(1, TimeUnit.SECONDS)
                 .subscribe();
 
@@ -384,7 +382,6 @@ public class NegativeAcksTest extends ProducerConsumerBase {
                 .topic(topic)
                 .subscriptionName("sub")
                 .subscriptionType(SubscriptionType.Failover)
-                .enableBatchIndexAcknowledgment(true)
                 .acknowledgmentGroupTime(100, TimeUnit.MILLISECONDS)
                 .receiverQueueSize(10)
                 .subscribe();

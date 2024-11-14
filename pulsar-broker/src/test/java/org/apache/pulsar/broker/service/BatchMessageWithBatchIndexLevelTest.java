@@ -68,7 +68,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
     @BeforeClass
     @Override
     protected void setup() throws Exception {
-        conf.setAcknowledgmentAtBatchIndexLevelEnabled(true);
         super.baseSetup();
     }
 
@@ -86,7 +85,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .subscriptionName(subscriptionName)
                 .receiverQueueSize(10)
                 .subscriptionType(SubscriptionType.Shared)
-                .enableBatchIndexAcknowledgment(true)
                 .negativeAckRedeliveryDelay(100, TimeUnit.MILLISECONDS)
                 .subscribe();
 
@@ -148,7 +146,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .subscriptionName(subscriptionName)
                 .subscriptionType(SubscriptionType.Shared)
                 .receiverQueueSize(10)
-                .enableBatchIndexAcknowledgment(true)
                 .negativeAckRedeliveryDelay(100, TimeUnit.MILLISECONDS)
                 .subscribe();
 
@@ -190,7 +187,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .subscriptionName(subscriptionName2)
                 .subscriptionType(SubscriptionType.Shared)
                 .receiverQueueSize(10)
-                .enableBatchIndexAcknowledgment(true)
                 .negativeAckRedeliveryDelay(100, TimeUnit.MILLISECONDS)
                 .subscribe();
         @Cleanup
@@ -246,7 +242,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .isAckReceiptEnabled(true)
                 .subscriptionName(subName)
                 .subscriptionType(SubscriptionType.Shared)
-                .enableBatchIndexAcknowledgment(true)
                 .subscribe();
 
         @Cleanup
@@ -258,7 +253,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .isAckReceiptEnabled(true)
                 .subscriptionName(subName)
                 .subscriptionType(SubscriptionType.Shared)
-                .enableBatchIndexAcknowledgment(true)
                 .subscribe();
 
         for (int i = 0; i < 5; i++) {
@@ -321,7 +315,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .subscriptionName(subscriptionName)
                 .subscriptionType(SubscriptionType.Shared)
                 .negativeAckRedeliveryDelay(redeliveryDelaySeconds, TimeUnit.SECONDS)
-                .enableBatchIndexAcknowledgment(true)
                 .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                 .acknowledgmentGroupTime(1, TimeUnit.HOURS)
                 .subscribe();
@@ -397,7 +390,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .subscriptionName("sub")
                 .subscriptionType(SubscriptionType.Shared)
                 .acknowledgmentGroupTime(100, TimeUnit.MILLISECONDS)
-                .enableBatchIndexAcknowledgment(true)
                 .isAckReceiptEnabled(true)
                 .subscribe();
 
@@ -428,7 +420,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .topic(topicName)
                 .receiverQueueSize(receiverQueueSize)
                 .subscriptionName(subName)
-                .enableBatchIndexAcknowledgment(true)
                 .subscriptionType(SubscriptionType.Shared)
                 .isAckReceiptEnabled(true);
 
@@ -602,7 +593,6 @@ public class BatchMessageWithBatchIndexLevelTest extends BatchMessageTest {
                 .topic(topicName)
                 .receiverQueueSize(receiverQueueSize)
                 .subscriptionName(subName)
-                .enableBatchIndexAcknowledgment(true)
                 .subscriptionType(SubscriptionType.Shared)
                 .isAckReceiptEnabled(true);
 
