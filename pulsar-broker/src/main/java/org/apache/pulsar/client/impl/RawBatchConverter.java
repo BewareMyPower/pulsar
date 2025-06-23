@@ -22,6 +22,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.common.protocol.Commands.magicBrokerEntryMetadata;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.CompositeByteBuf;
+import io.netty.buffer.Unpooled;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -154,6 +155,7 @@ public class RawBatchConverter {
                 return Optional.of(msg);
             }
 
+            SingleMessageMetadata emptyMetadata = new SingleMessageMetadata().setCompactedOut(true);
             int batchSize = metadata.getNumMessagesInBatch();
             final var retainedBatchIndexes = new ArrayList<Integer>();
             SingleMessageMetadata singleMessageMetadata = new SingleMessageMetadata();
@@ -165,20 +167,27 @@ public class RawBatchConverter {
                                                       msg.getMessageIdData().getEntryId(),
                                                       msg.getMessageIdData().getPartition(),
                                                       i);
-                boolean retained;
                 if (singleMessageMetadata.isCompactedOut()) {
                     // we may read compacted out message from the compacted topic
-                    retained = false;
+                    Commands.serializeSingleMessageInBatchWithPayload(emptyMetadata,
+                            Unpooled.EMPTY_BUFFER, batchBuffer);
                 } else if (!singleMessageMetadata.hasPartitionKey()) {
-                    retained = retainNullKey;
-                } else {
-                    retained = filter.test(singleMessageMetadata.getPartitionKey(), id)
-                            && singleMessagePayload.readableBytes() > 0;
-                }
-                if (retained) {
+                    if (retainNullKey) {
+                        retainedBatchIndexes.add(i);
+                        Commands.serializeSingleMessageInBatchWithPayload(singleMessageMetadata,
+                                singleMessagePayload, batchBuffer);
+                    } else {
+                        Commands.serializeSingleMessageInBatchWithPayload(emptyMetadata,
+                                Unpooled.EMPTY_BUFFER, batchBuffer);
+                    }
+                } else if (filter.test(singleMessageMetadata.getPartitionKey(), id)
+                           && singleMessagePayload.readableBytes() > 0) {
                     retainedBatchIndexes.add(i);
-                    Commands.serializeSingleMessageInBatchWithPayload(singleMessageMetadata, singleMessagePayload,
-                            batchBuffer);
+                    Commands.serializeSingleMessageInBatchWithPayload(singleMessageMetadata,
+                                                                      singleMessagePayload, batchBuffer);
+                } else {
+                    Commands.serializeSingleMessageInBatchWithPayload(emptyMetadata,
+                                                                      Unpooled.EMPTY_BUFFER, batchBuffer);
                 }
 
                 singleMessagePayload.release();

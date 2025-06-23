@@ -1322,10 +1322,8 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 return null;
             }
 
-            final int batchIndex = msgMetadata.getCompactedBatchIndexesCount() > 0
-                    ? msgMetadata.getCompactedBatchIndexeAt(index) : index;
             BatchMessageIdImpl batchMessageIdImpl = new BatchMessageIdImpl(messageId.getLedgerId(),
-                    messageId.getEntryId(), getPartitionIndex(), batchIndex, numMessages, ackSetInMessageId);
+                    messageId.getEntryId(), getPartitionIndex(), index, numMessages, ackSetInMessageId);
 
             final ByteBuf payloadBuffer = (singleMessagePayload != null) ? singleMessagePayload : payload;
             final MessageImpl<V> message = MessageImpl.create(topicName.toString(), batchMessageIdImpl,
@@ -1774,14 +1772,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         SingleMessageMetadata singleMessageMetadata = new SingleMessageMetadata();
         int skippedMessages = 0;
         try {
-            final int compactedBatchIndexesCount = msgMetadata.getCompactedBatchIndexesCount();
-            final int numMessages;
-            if (compactedBatchIndexesCount > 0) {
-                numMessages = compactedBatchIndexesCount;
-            } else {
-                numMessages = batchSize;
-            }
-            for (int i = 0; i < numMessages; ++i) {
+            for (int i = 0; i < batchSize; ++i) {
                 final MessageImpl<T> message = newSingleMessage(i, batchSize, brokerEntryMetadata, msgMetadata,
                         singleMessageMetadata, uncompressedPayload, batchMessage, schema, true,
                         ackBitSet, ackSetInMessageId, redeliveryCount, consumerEpoch);
