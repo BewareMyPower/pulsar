@@ -21,7 +21,6 @@ package org.apache.pulsar.client.impl;
 import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.common.protocol.Commands.DEFAULT_CONSUMER_EPOCH;
 import static org.apache.pulsar.common.protocol.Commands.hasChecksum;
-import static org.apache.pulsar.common.protocol.Commands.processBatch;
 import static org.apache.pulsar.common.protocol.Commands.serializeWithSize;
 import static org.apache.pulsar.common.util.Runnables.catchingAndLoggingThrowables;
 import com.google.common.annotations.VisibleForTesting;
@@ -74,7 +73,6 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.tuple.Triple;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerCryptoFailureAction;
@@ -1324,8 +1322,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 return null;
             }
 
+            final int batchIndex = msgMetadata.getCompactedBatchIndexesCount() > 0
+                    ? msgMetadata.getCompactedBatchIndexeAt(index) : index;
             BatchMessageIdImpl batchMessageIdImpl = new BatchMessageIdImpl(messageId.getLedgerId(),
-                    messageId.getEntryId(), getPartitionIndex(), index, numMessages, ackSetInMessageId);
+                    messageId.getEntryId(), getPartitionIndex(), batchIndex, numMessages, ackSetInMessageId);
 
             final ByteBuf payloadBuffer = (singleMessagePayload != null) ? singleMessagePayload : payload;
             final MessageImpl<V> message = MessageImpl.create(topicName.toString(), batchMessageIdImpl,
@@ -1760,54 +1760,63 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         // create ack tracker for entry aka batch
         MessageIdImpl batchMessage = new MessageIdImpl(messageId.getLedgerId(), messageId.getEntryId(),
                 getPartitionIndex());
-        final List<MessageImpl<T>> possibleToDeadLetter;
+        List<MessageImpl<T>> possibleToDeadLetter = null;
         if (deadLetterPolicy != null && redeliveryCount >= deadLetterPolicy.getMaxRedeliverCount()) {
             possibleToDeadLetter = new ArrayList<>();
-        } else {
-            possibleToDeadLetter = null;
         }
 
         BitSet ackSetInMessageId = BatchMessageIdImpl.newAckSet(batchSize);
-        final BitSetRecyclable ackBitSet;
+        BitSetRecyclable ackBitSet = null;
         if (ackSet != null && ackSet.size() > 0) {
             ackBitSet = BitSetRecyclable.valueOf(SafeCollectionUtils.longListToArray(ackSet));
-        } else {
-            ackBitSet = null;
         }
 
-        final MutableInt skippedMessages = new MutableInt(0);
-        processBatch(msgMetadata, uncompressedPayload, (batchIndex, singleMessageMetadata, payload) -> {
-            final MessageImpl<T> message = newSingleMessage(batchIndex, batchSize, brokerEntryMetadata, msgMetadata,
-                    singleMessageMetadata, uncompressedPayload, batchMessage, schema, false,
-                    ackBitSet, ackSetInMessageId, redeliveryCount, consumerEpoch);
-            if (message == null) {
-                // If it is not in ackBitSet, it means Broker does not want to deliver it to the client, and
-                // did not decrease the permits in the broker-side.
-                // So do not acquire more permits for this message.
-                // Why not skip this single message in the first line of for-loop block? We need call
-                // "newSingleMessage" to move "payload.readerIndex" to a correct value to get the correct data.
-                if (!isSingleMessageAcked(ackBitSet, batchIndex)) {
-                    skippedMessages.incrementAndGet();
+        SingleMessageMetadata singleMessageMetadata = new SingleMessageMetadata();
+        int skippedMessages = 0;
+        try {
+            final int compactedBatchIndexesCount = msgMetadata.getCompactedBatchIndexesCount();
+            final int numMessages;
+            if (compactedBatchIndexesCount > 0) {
+                numMessages = compactedBatchIndexesCount;
+            } else {
+                numMessages = batchSize;
+            }
+            for (int i = 0; i < numMessages; ++i) {
+                final MessageImpl<T> message = newSingleMessage(i, batchSize, brokerEntryMetadata, msgMetadata,
+                        singleMessageMetadata, uncompressedPayload, batchMessage, schema, true,
+                        ackBitSet, ackSetInMessageId, redeliveryCount, consumerEpoch);
+                if (message == null) {
+                    // If it is not in ackBitSet, it means Broker does not want to deliver it to the client, and
+                    // did not decrease the permits in the broker-side.
+                    // So do not acquire more permits for this message.
+                    // Why not skip this single message in the first line of for-loop block? We need call
+                    // "newSingleMessage" to move "payload.readerIndex" to a correct value to get the correct data.
+                    if (!isSingleMessageAcked(ackBitSet, i)) {
+                        skippedMessages++;
+                    }
+                    continue;
                 }
-                return;
-            }
-            if (possibleToDeadLetter != null) {
-                possibleToDeadLetter.add(message);
-                // Skip the message which reaches the max redelivery count.
-                if (redeliveryCount > deadLetterPolicy.getMaxRedeliverCount()) {
-                    skippedMessages.incrementAndGet();
-                    return;
+                if (possibleToDeadLetter != null) {
+                    possibleToDeadLetter.add(message);
+                    // Skip the message which reaches the max redelivery count.
+                    if (redeliveryCount > deadLetterPolicy.getMaxRedeliverCount()) {
+                        skippedMessages++;
+                        continue;
+                    }
                 }
+                if (acknowledgmentsGroupingTracker.isDuplicate(message.getMessageId())) {
+                    skippedMessages++;
+                    continue;
+                }
+                executeNotifyCallback(message);
             }
-            if (acknowledgmentsGroupingTracker.isDuplicate(message.getMessageId())) {
-                skippedMessages.incrementAndGet();
-                return;
+            if (ackBitSet != null) {
+                ackBitSet.recycle();
             }
-            executeNotifyCallback(message);
-        }, (batchIndex, e) -> {
-            log.warn("[{}] [{}] unable to obtain message in batch {}", subscription, consumerName, batchIndex, e);
+        } catch (IllegalStateException e) {
+            log.warn("[{}] [{}] unable to obtain message in batch", subscription, consumerName, e);
             discardCorruptedMessage(messageId, cnx, ValidationError.BatchDeSerializeError);
-        });
+        }
 
         if (deadLetterPolicy != null && possibleSendToDeadLetterTopicMessages != null) {
             if (redeliveryCount >= deadLetterPolicy.getMaxRedeliverCount()) {
@@ -1824,8 +1833,8 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                     consumerName, incomingMessages.size(), incomingMessages.remainingCapacity());
         }
 
-        if (skippedMessages.intValue() > 0) {
-            increaseAvailablePermits(cnx, skippedMessages.intValue());
+        if (skippedMessages > 0) {
+            increaseAvailablePermits(cnx, skippedMessages);
         }
     }
 

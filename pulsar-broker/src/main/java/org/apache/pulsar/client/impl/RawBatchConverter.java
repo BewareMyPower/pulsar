@@ -33,6 +33,7 @@ import org.apache.pulsar.client.api.RawMessage;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.proto.CompressionType;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
+import org.apache.pulsar.common.api.proto.SingleMessageMetadata;
 import org.apache.pulsar.common.compression.CompressionCodec;
 import org.apache.pulsar.common.compression.CompressionCodecProvider;
 import org.apache.pulsar.common.protocol.Commands;
@@ -60,6 +61,7 @@ public class RawBatchConverter {
         } else {
             Commands.skipMessageMetadata(payload);
         }
+        int batchSize = metadata.getNumMessagesInBatch();
 
         CompressionType compressionType = metadata.getCompression();
         CompressionCodec codec = CompressionCodecProvider.getCompressionCodec(compressionType);
@@ -68,15 +70,22 @@ public class RawBatchConverter {
 
         List<MessageCompactionData> messageCompactionDataList = new ArrayList<>();
 
-        Commands.processBatch(metadata, uncompressedPayload, (batchIndex, smm, __) -> {
+        SingleMessageMetadata smm = new SingleMessageMetadata();
+        for (int i = 0; i < batchSize; i++) {
+            ByteBuf singleMessagePayload = Commands.deSerializeSingleMessageInBatch(uncompressedPayload,
+                smm,
+                0, batchSize);
             MessageId id = new BatchMessageIdImpl(msg.getMessageIdData().getLedgerId(),
-                    msg.getMessageIdData().getEntryId(), msg.getMessageIdData().getPartition(), batchIndex);
+                msg.getMessageIdData().getEntryId(),
+                msg.getMessageIdData().getPartition(),
+                i);
             if (!smm.isCompactedOut()) {
                 messageCompactionDataList.add(new MessageCompactionData(id,
-                        smm.hasPartitionKey() ? smm.getPartitionKey() : null,
-                        smm.hasPayloadSize() ? smm.getPayloadSize() : 0, smm.getEventTime()));
+                    smm.hasPartitionKey() ? smm.getPartitionKey() : null,
+                    smm.hasPayloadSize() ? smm.getPayloadSize() : 0, smm.getEventTime()));
             }
-        }, (__, ___) -> {});
+            singleMessagePayload.release();
+        }
         uncompressedPayload.release();
         return messageCompactionDataList;
     }
@@ -145,24 +154,35 @@ public class RawBatchConverter {
                 return Optional.of(msg);
             }
 
+            int batchSize = metadata.getNumMessagesInBatch();
             final var retainedBatchIndexes = new ArrayList<Integer>();
-            Commands.processBatch(metadata, uncompressedPayload, (batchIndex, singleMetadata, singlePayload) -> {
-                final var id = new BatchMessageIdImpl(msg.getMessageIdData().getLedgerId(),
-                        msg.getMessageIdData().getEntryId(), msg.getMessageIdData().getPartition(), batchIndex);
+            SingleMessageMetadata singleMessageMetadata = new SingleMessageMetadata();
+            for (int i = 0; i < batchSize; i++) {
+                ByteBuf singleMessagePayload = Commands.deSerializeSingleMessageInBatch(uncompressedPayload,
+                                                                                        singleMessageMetadata,
+                                                                                        0, batchSize);
+                MessageId id = new BatchMessageIdImpl(msg.getMessageIdData().getLedgerId(),
+                                                      msg.getMessageIdData().getEntryId(),
+                                                      msg.getMessageIdData().getPartition(),
+                                                      i);
                 boolean retained;
-                if (singleMetadata.isCompactedOut()) {
+                if (singleMessageMetadata.isCompactedOut()) {
                     // we may read compacted out message from the compacted topic
                     retained = false;
-                } else if (!singleMetadata.hasPartitionKey()) {
+                } else if (!singleMessageMetadata.hasPartitionKey()) {
                     retained = retainNullKey;
                 } else {
-                    retained = filter.test(singleMetadata.getPartitionKey(), id) && singlePayload.readableBytes() > 0;
+                    retained = filter.test(singleMessageMetadata.getPartitionKey(), id)
+                            && singleMessagePayload.readableBytes() > 0;
                 }
                 if (retained) {
-                    retainedBatchIndexes.add(batchIndex);
-                    Commands.serializeSingleMessageInBatchWithPayload(singleMetadata, singlePayload, batchBuffer);
+                    retainedBatchIndexes.add(i);
+                    Commands.serializeSingleMessageInBatchWithPayload(singleMessageMetadata, singleMessagePayload,
+                            batchBuffer);
                 }
-            }, (__, ___) -> {});
+
+                singleMessagePayload.release();
+            }
 
             if (!retainedBatchIndexes.isEmpty()) {
                 int newUncompressedSize = batchBuffer.readableBytes();
