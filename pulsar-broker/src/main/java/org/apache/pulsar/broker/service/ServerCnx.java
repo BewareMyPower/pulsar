@@ -2458,6 +2458,10 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         if (batchSize <= 1){
             return -1;
         }
+        final int compactedBatchIndexesCount = metadata.getCompactedBatchIndexesCount();
+        if (compactedBatchIndexesCount > 0) {
+            return metadata.getCompactedBatchIndexeAt(compactedBatchIndexesCount - 1);
+        }
         if (metadata.hasCompression()) {
             var tmp = payload;
             CompressionType compressionType = metadata.getCompression();
