@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -2099,5 +2100,48 @@ public class Commands {
 
     public static boolean peerSupportsBrokerMetadata(int peerVersion) {
         return peerVersion >= ProtocolVersion.v16.getValue();
+    }
+
+    public interface SingleMessageProcessor {
+
+        void process(int batchIndex, SingleMessageMetadata singleMessageMetadata, ByteBuf payload);
+    }
+
+    /**
+     * Process the batch payload buffer.
+     *
+     * @param metadata the metadata of this payload
+     * @param payload the uncompressed and decrypted payload buffer
+     * @param exceptionBiConsumer when the message of batch index failed to deserialize, the batch index and the
+     *                            corresponding exception will be passed to it
+     * @apiNote The `processor` should process the `SingleMessageMetadata` and `ByteBuf` arguments in the current
+     *   thread because they are local variables that can be modified or released after being processed.
+     */
+    public static void processBatch(MessageMetadata metadata, ByteBuf payload, SingleMessageProcessor processor,
+                                    BiConsumer<Integer, IOException> exceptionBiConsumer) {
+        final int batchSize = metadata.getNumMessagesInBatch();
+        if (batchSize <= 1) {
+            return;
+        }
+        final SingleMessageMetadata singleMessageMetadata = LOCAL_SINGLE_MESSAGE_METADATA.get();
+        final int compactedBatchIndexesCount = metadata.getCompactedBatchIndexesCount();
+        final boolean compacted = compactedBatchIndexesCount > 0;
+        final int numMessages = compacted ? compactedBatchIndexesCount : batchSize;
+        for (int i = 0; i < numMessages; i++) {
+            final int batchIndex = compacted ? metadata.getCompactedBatchIndexeAt(i) : i;
+            final ByteBuf singleMessagePayload;
+            try {
+                singleMessagePayload = Commands.deSerializeSingleMessageInBatch(payload,
+                        singleMessageMetadata, batchIndex, batchSize);
+            } catch (IOException e) {
+                exceptionBiConsumer.accept(batchIndex, e);
+                continue;
+            }
+            try {
+                processor.process(batchIndex, singleMessageMetadata, singleMessagePayload);
+            } finally {
+                singleMessagePayload.release();
+            }
+        }
     }
 }
