@@ -150,11 +150,6 @@ public class RawBatchConverter {
         int uncompressedSize = metadata.getUncompressedSize();
         ByteBuf uncompressedPayload = codec.decode(payload, uncompressedSize);
         try {
-            if (metadata.getCompactedBatchIndexesCount() > 0) {
-                // Compacted messages have been read
-                return Optional.of(msg);
-            }
-
             SingleMessageMetadata emptyMetadata = new SingleMessageMetadata().setCompactedOut(true);
             int batchSize = metadata.getNumMessagesInBatch();
             final var retainedBatchIndexes = new ArrayList<Integer>();
