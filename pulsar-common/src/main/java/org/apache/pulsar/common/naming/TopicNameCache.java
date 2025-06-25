@@ -35,7 +35,7 @@ class TopicNameCache extends NameCache<TopicName> {
 
     @Override
     protected TopicName createValue(String key) {
-        return new TopicName(key);
+        return new TopicName(key, false);
     }
 
     @Override

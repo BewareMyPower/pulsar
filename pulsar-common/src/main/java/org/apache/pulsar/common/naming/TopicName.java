@@ -110,7 +110,7 @@ public class TopicName implements ServiceUnitId {
      * @param completeTopicName the topic name
      */
     @SuppressFBWarnings("DCN_NULLPOINTER_EXCEPTION")
-    public TopicName(String completeTopicName) {
+    public TopicName(String completeTopicName, boolean initializeNamespaceName) {
         try {
             // The topic name can be in two different forms, one is fully qualified topic name,
             // the other one is short topic name
@@ -165,6 +165,10 @@ public class TopicName implements ServiceUnitId {
                 }
                 this.completeTopicName = completeTopicName;
                 this.domain = TopicDomain.getEnum(completeTopicName.substring(0, index));
+            }
+
+            if (initializeNamespaceName) {
+                getNamespaceObject();
             }
 
             if (StringUtils.isBlank(localName)) {
