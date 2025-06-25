@@ -26,14 +26,15 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.common.util.Codec;
+import org.apache.pulsar.common.util.StringInterner;
 
 /**
  * Encapsulate the parsing of the completeTopicName name.
  */
 public class TopicName implements ServiceUnitId {
 
-    public static final String PUBLIC_TENANT = "public";
-    public static final String DEFAULT_NAMESPACE = "default";
+    public static final String PUBLIC_TENANT = StringInterner.intern("public");
+    public static final String DEFAULT_NAMESPACE = StringInterner.intern("default");
 
     public static final String PARTITIONED_TOPIC_SUFFIX = "-partition-";
 
@@ -51,14 +52,8 @@ public class TopicName implements ServiceUnitId {
 
     private static final ConcurrentHashMap<String, TopicName> cache = new ConcurrentHashMap<>();
 
-    public static void clearIfReachedMaxCapacity(int maxCapacity) {
-        if (maxCapacity < 0) {
-            // Unlimited cache.
-            return;
-        }
-        if (cache.size() > maxCapacity) {
-            cache.clear();
-        }
+    public static void invalidateCache() {
+        TopicNameCache.INSTANCE.invalidateCache();
     }
 
     public static TopicName get(String domain, NamespaceName namespaceName, String topic) {
@@ -78,11 +73,7 @@ public class TopicName implements ServiceUnitId {
     }
 
     public static TopicName get(String topic) {
-        TopicName tp = cache.get(topic);
-        if (tp != null) {
-            return tp;
-        }
-        return cache.computeIfAbsent(topic, k -> new TopicName(k));
+        return TopicNameCache.INSTANCE.get(topic);
     }
 
     public static TopicName getPartitionedTopicName(String topic) {
