@@ -82,18 +82,8 @@ public interface TopicCompactionService extends AutoCloseable {
      * entry's metadata, providing a timestamp for when the entry was published.
      * </p>
      */
-    record MessagePosition(long ledgerId, long entryId, int batchIndex, long publishTime) implements Position {
+    record MessagePosition(long ledgerId, long entryId, int batchIndex, long publishTime) {
 
         public static final MessagePosition EARLIEST = new MessagePosition(-1L, -1L, 0, 0);
-
-        @Override
-        public long getLedgerId() {
-            return ledgerId;
-        }
-
-        @Override
-        public long getEntryId() {
-            return entryId;
-        }
     }
 }

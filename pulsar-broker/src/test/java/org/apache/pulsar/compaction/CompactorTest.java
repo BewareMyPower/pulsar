@@ -399,10 +399,10 @@ public class CompactorTest extends MockedPulsarServiceBaseTest {
         });
 
         Position lastCompactedPosition = topicCompactionService.getLastCompactedPosition().get();
-        final var lastCompactedEntry = topicCompactionService.getLastMessagePosition().get();
+        final var lastMessagePosition = topicCompactionService.getLastMessagePosition().get();
 
         Assert.assertTrue(PositionFactory.create(lastCompactedPosition.getLedgerId(), lastCompactedPosition.getEntryId())
-                .compareTo(lastCompactedEntry.getLedgerId(), lastCompactedEntry.getEntryId()) >= 0);
+                .compareTo(lastMessagePosition.ledgerId(), lastMessagePosition.entryId()) >= 0);
 
         future.join();
     }
