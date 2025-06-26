@@ -163,6 +163,15 @@ message MessageMetadata {
 
     // Indicate if the message partition key is set
     optional bool null_partition_key = 30 [default = false];
+
+    // If the batch has been compacted, some messages might be compacted out. For example, if the original batch
+    // consists of `k0 => v0, k1 => v1, k2 => v2, k1 => null`, the compacted batch will only have `k0 => v1` and
+    // `k2 => v2` retained. In this case, this field will be set with `[0, 2]` and the payload buffer will only
+    // contain `k0 => v0` and `k2 => v2`.
+    // The older compaction service does not have this field. Batches compacted by older compaction service require
+    // checking the `compacted_out` field of `SingleMessageMetadata` to filter out compacted messages (like `k1 => v1`
+    // and `k1 => null`) in the example above.
+    repeated int32 compacted_batch_indexes = 31;
 }
 
 message SingleMessageMetadata {

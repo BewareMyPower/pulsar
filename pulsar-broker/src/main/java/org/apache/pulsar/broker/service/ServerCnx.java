@@ -2288,6 +2288,9 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                          markDeletePosition = ((PersistentSubscription) consumer.getSubscription()).getCursor()
                                  .getMarkDeletedPosition();
                      }
+                     if (markDeletePosition == null) {
+                         markDeletePosition = PositionFactory.EARLIEST;
+                     }
 
                      getLargestBatchIndexWhenPossible(
                              topic,
@@ -2344,8 +2347,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
                 } else {
                     // if readCompacted is false, we need to return MessageId.earliest
                     writeAndFlush(Commands.newGetLastMessageIdResponse(requestId, -1, -1, partitionIndex, -1,
-                            markDeletePosition != null ? markDeletePosition.getLedgerId() : -1,
-                            markDeletePosition != null ? markDeletePosition.getEntryId() : -1));
+                            markDeletePosition.getLedgerId(), markDeletePosition.getEntryId()));
                 }
                 return;
             }
@@ -2404,8 +2406,7 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
                     writeAndFlush(Commands.newGetLastMessageIdResponse(requestId, lastPosition.getLedgerId(),
                             lastPosition.getEntryId(), partitionIndex, largestBatchIndex,
-                            markDeletePosition != null ? markDeletePosition.getLedgerId() : -1,
-                            markDeletePosition != null ? markDeletePosition.getEntryId() : -1));
+                            markDeletePosition.getLedgerId(), markDeletePosition.getEntryId()));
                 }
             });
         });
@@ -2413,38 +2414,11 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
 
     private void handleLastMessageIdFromCompactionService(PersistentTopic persistentTopic, long requestId,
                                                           int partitionIndex, Position markDeletePosition) {
-        persistentTopic.getTopicCompactionService().readLastCompactedEntry().thenAccept(entry -> {
-            if (entry != null) {
-                try {
-                    // in this case, all the data has been compacted, so return the last position
-                    // in the compacted ledger to the client
-                    ByteBuf payload = entry.getDataBuffer();
-                    MessageMetadata metadata = Commands.parseMessageMetadata(payload);
-                    int largestBatchIndex;
-                    try {
-                        largestBatchIndex = calculateTheLastBatchIndexInBatch(metadata, payload);
-                    } catch (IOException ioEx) {
-                        writeAndFlush(Commands.newError(requestId, ServerError.MetadataError,
-                                "Failed to deserialize batched message from the last entry of the compacted Ledger: "
-                                        + ioEx.getMessage()));
-                        return;
-                    }
-                    writeAndFlush(Commands.newGetLastMessageIdResponse(requestId,
-                            entry.getLedgerId(), entry.getEntryId(), partitionIndex, largestBatchIndex,
-                            markDeletePosition != null ? markDeletePosition.getLedgerId() : -1,
-                            markDeletePosition != null ? markDeletePosition.getEntryId() : -1));
-                } finally {
-                    entry.release();
-                }
-            } else {
-                // in this case, the ledgers been removed except the current ledger
-                // and current ledger without any data
-                writeAndFlush(Commands.newGetLastMessageIdResponse(requestId,
-                        -1, -1, partitionIndex, -1,
-                        markDeletePosition != null ? markDeletePosition.getLedgerId() : -1,
-                        markDeletePosition != null ? markDeletePosition.getEntryId() : -1));
-            }
-        }).exceptionally(ex -> {
+        persistentTopic.getTopicCompactionService().getLastMessagePosition().thenAccept(position ->
+                writeAndFlush(Commands.newGetLastMessageIdResponse(requestId, position.ledgerId(), position.entryId(),
+                        partitionIndex, position.batchIndex(), markDeletePosition.getLedgerId(),
+                        markDeletePosition.getEntryId()))
+        ).exceptionally(ex -> {
             writeAndFlush(Commands.newError(
                     requestId, ServerError.MetadataError,
                     "Failed to read last entry of the compacted Ledger "
@@ -2457,6 +2431,10 @@ public class ServerCnx extends PulsarHandler implements TransportCnx {
         int batchSize = metadata.getNumMessagesInBatch();
         if (batchSize <= 1){
             return -1;
+        }
+        final int compactedBatchIndexesCount = metadata.getCompactedBatchIndexesCount();
+        if (compactedBatchIndexesCount > 0) {
+            return metadata.getCompactedBatchIndexeAt(compactedBatchIndexesCount - 1);
         }
         if (metadata.hasCompression()) {
             var tmp = payload;
