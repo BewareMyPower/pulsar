@@ -22,18 +22,24 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static org.apache.pulsar.compaction.CompactedTopicImpl.COMPACT_LEDGER_EMPTY;
 import static org.apache.pulsar.compaction.CompactedTopicImpl.NEWER_THAN_COMPACTED;
 import static org.apache.pulsar.compaction.CompactedTopicImpl.findStartPoint;
+import io.netty.buffer.ByteBuf;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Predicate;
+import java.util.concurrent.CompletionException;
 import java.util.function.Supplier;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.Position;
-import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
+import org.apache.bookkeeper.mledger.PositionFactory;
+import org.apache.pulsar.common.api.proto.CompressionType;
+import org.apache.pulsar.common.api.proto.MessageMetadata;
+import org.apache.pulsar.common.api.proto.SingleMessageMetadata;
+import org.apache.pulsar.common.compression.CompressionCodec;
+import org.apache.pulsar.common.compression.CompressionCodecProvider;
 import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.FutureUtil;
 import org.jspecify.annotations.NonNull;
@@ -98,8 +104,7 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
         return resultFuture;
     }
 
-    @Override
-    public CompletableFuture<Entry> readLastCompactedEntry() {
+    private CompletableFuture<Entry> readLastCompactedEntry() {
         return compactedTopic.readLastEntryOfCompactedLedger();
     }
 
@@ -109,23 +114,10 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
     }
 
     @Override
-    public CompletableFuture<Entry> findEntryByPublishTime(long publishTime) {
-        final Predicate<Entry> predicate = entry -> {
-            return Commands.parseMessageMetadata(entry.getDataBuffer()).getPublishTime() >= publishTime;
-        };
-        return compactedTopic.findFirstMatchEntry(predicate);
-    }
-
-    @Override
-    public CompletableFuture<Entry> findEntryByEntryIndex(long entryIndex) {
-        final Predicate<Entry> predicate = entry -> {
-            BrokerEntryMetadata brokerEntryMetadata = Commands.parseBrokerEntryMetadataIfExist(entry.getDataBuffer());
-            if (brokerEntryMetadata == null || !brokerEntryMetadata.hasIndex()) {
-                return false;
-            }
-            return brokerEntryMetadata.getIndex() >= entryIndex;
-        };
-        return compactedTopic.findFirstMatchEntry(predicate);
+    public CompletableFuture<Position> findPositionByPublishTime(long publishTime) {
+        return compactedTopic.findFirstMatchEntry(entry ->
+                Commands.parseMessageMetadata(entry.getDataBuffer()).getPublishTime() > publishTime
+        ).thenApply(entry -> entry != null ? entry.getPosition() : PositionFactory.EARLIEST);
     }
 
     public CompactedTopicImpl getCompactedTopic() {
@@ -135,5 +127,57 @@ public class PulsarTopicCompactionService implements TopicCompactionService {
     @Override
     public void close() throws IOException {
         // noop
+    }
+
+    @Override
+    public CompletableFuture<MessagePosition> getLastMessagePosition() {
+        return readLastCompactedEntry().thenApply(entry -> {
+            if (entry == null) {
+                return MessagePosition.EARLIEST;
+            }
+            try {
+                // in this case, all the data has been compacted, so return the last position
+                // in the compacted ledger to the client
+                ByteBuf payload = entry.getDataBuffer();
+                MessageMetadata metadata = Commands.parseMessageMetadata(payload);
+                try {
+                    final var batchIndex = calculateTheLastBatchIndexInBatch(metadata, payload);
+                    final var publishTime = metadata.getPublishTime();
+                    return new MessagePosition(entry.getLedgerId(), entry.getEntryId(), batchIndex, publishTime);
+                } catch (IOException e) {
+                    throw new CompletionException(new IOException("Failed to deserialize batched message from "
+                            + "the last entry of the compacted ledger: " + e.getMessage()));
+                }
+            } finally {
+                entry.release();
+            }
+        });
+    }
+
+    private static int calculateTheLastBatchIndexInBatch(MessageMetadata metadata, ByteBuf payload) throws IOException {
+        int batchSize = metadata.getNumMessagesInBatch();
+        if (batchSize <= 1){
+            return -1;
+        }
+        if (metadata.hasCompression()) {
+            var tmp = payload;
+            CompressionType compressionType = metadata.getCompression();
+            CompressionCodec codec = CompressionCodecProvider.getCompressionCodec(compressionType);
+            int uncompressedSize = metadata.getUncompressedSize();
+            payload = codec.decode(payload, uncompressedSize);
+            tmp.release();
+        }
+        SingleMessageMetadata singleMessageMetadata = new SingleMessageMetadata();
+        int lastBatchIndexInBatch = -1;
+        for (int i = 0; i < batchSize; i++){
+            ByteBuf singleMessagePayload =
+                    Commands.deSerializeSingleMessageInBatch(payload, singleMessageMetadata, i, batchSize);
+            singleMessagePayload.release();
+            if (singleMessageMetadata.isCompactedOut()){
+                continue;
+            }
+            lastBatchIndexInBatch = i;
+        }
+        return lastBatchIndexInBatch;
     }
 }
