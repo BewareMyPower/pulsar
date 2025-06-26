@@ -45,7 +45,6 @@ import lombok.Cleanup;
 import org.apache.bookkeeper.client.BookKeeper;
 import org.apache.bookkeeper.client.LedgerEntry;
 import org.apache.bookkeeper.client.LedgerHandle;
-import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.pulsar.broker.BrokerTestUtil;
@@ -400,7 +399,7 @@ public class CompactorTest extends MockedPulsarServiceBaseTest {
         });
 
         Position lastCompactedPosition = topicCompactionService.getLastCompactedPosition().get();
-        Entry lastCompactedEntry = topicCompactionService.readLastCompactedEntry().get();
+        final var lastCompactedEntry = topicCompactionService.getLastMessagePosition().get();
 
         Assert.assertTrue(PositionFactory.create(lastCompactedPosition.getLedgerId(), lastCompactedPosition.getEntryId())
                 .compareTo(lastCompactedEntry.getLedgerId(), lastCompactedEntry.getEntryId()) >= 0);
