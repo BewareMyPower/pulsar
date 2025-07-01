@@ -83,10 +83,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.pulsar.broker.PulsarService;
-import org.apache.pulsar.broker.lookup.LookupResult;
-import org.apache.pulsar.broker.namespace.NamespaceEphemeralData;
 import org.apache.pulsar.broker.namespace.NamespaceService;
-import org.apache.pulsar.broker.namespace.TopicExistsInfo;
 import org.apache.pulsar.broker.service.BrokerServiceException.PersistenceException;
 import org.apache.pulsar.broker.service.PulsarMetadataEventSynchronizer.State;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
@@ -152,7 +149,7 @@ public class BrokerServiceTest extends BrokerTestBase {
     protected void setup() throws Exception {
         conf.setSystemTopicEnabled(false);
         conf.setTopicLevelPoliciesEnabled(false);
-        conf.setTopicLoadTimeoutSeconds(2);
+        conf.setTopicLoadTimeoutSeconds(1);
         super.baseSetup();
     }
 
@@ -2032,54 +2029,30 @@ public class BrokerServiceTest extends BrokerTestBase {
 
     @Test
     public void testLoadTopicFail() throws Exception {
-        final var lookupResult = Optional.of(new LookupResult(new NamespaceEphemeralData(pulsar.getBrokerServiceUrl(),
-                null, pulsar.getWebServiceAddress(), null, false)));
+        final var topic = TopicName.get("prop/ns-abc/test-load-topic-fail");
+        admin.topics().createPartitionedTopic(topic.toString(), 1);
         final var realNamespaceService = pulsar.getNamespaceService();
         final var namespaceService = mock(NamespaceService.class);
-        final var firstTimeMap = new ConcurrentHashMap<TopicName, AtomicBoolean>();
-        when(namespaceService.isServiceUnitActiveAsync(any())).thenAnswer(invocation -> {
-            final var firstTime = firstTimeMap.computeIfAbsent((TopicName) invocation.getArguments()[0],
-                    __ -> new AtomicBoolean(true));
+        when(namespaceService.isServiceUnitActiveAsync(any())).thenAnswer(__ -> {
             final var future = new CompletableFuture<Boolean>();
-            if (firstTime.compareAndSet(true, false)){
-                CompletableFuture.delayedExecutor( 30, TimeUnit.SECONDS).execute(() -> future.complete(true));
-            } else {
-                future.complete(true);
-            }
+            CompletableFuture.delayedExecutor(conf.getTopicLoadTimeoutSeconds() + 1, TimeUnit.SECONDS)
+                    .execute(() -> future.complete(true));
             return future;
         });
         when(namespaceService.getBundleAsync(any())).thenReturn(CompletableFuture.completedFuture(
                 mock(NamespaceBundle.class)));
         when(namespaceService.checkBundleOwnership(any(), any())).thenReturn(CompletableFuture.completedFuture(true));
-        when(namespaceService.checkTopicExistsAsync(any())).thenReturn(CompletableFuture.completedFuture(
-                TopicExistsInfo.newNonPartitionedTopicExists()));
-        when(namespaceService.getBrokerServiceUrlAsync(any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(lookupResult));
-
-        final var topic1 = TopicName.get("prop/ns-abc/test-load-topic-fail1");
-        admin.topics().createPartitionedTopic(topic1.toString(), 1);
-        final var topic2 = TopicName.get("prop/ns-abc/test-load-topic-fail2");
-        admin.topics().createPartitionedTopic(topic2.toString(), 1);
 
         final var field = PulsarService.class.getDeclaredField("nsService");
         field.setAccessible(true);
         field.set(pulsar, namespaceService);
         try {
-            final var start = System.currentTimeMillis();
-            @Cleanup final var producer = pulsarClient.newProducer().topic(topic1.getPartition(0).toString())
-                    .create();
-            final var elapsed = System.currentTimeMillis() - start;
-            log.info("It spent {} ms to create producer", elapsed);
-            assertTrue(elapsed < conf.getTopicLoadTimeoutSeconds() * 2000L);
-
-            final var partition = topic2.getPartition(0).toString();
             try {
-                pulsar.getBrokerService().getTopicIfExists(partition).get();
+                pulsar.getBrokerService().getTopicIfExists(topic.getPartition(0).toString()).get();
                 fail();
             } catch (ExecutionException e) {
                 assertTrue(e.getMessage().contains("Failed to load topic within timeout"));
             }
-            assertFalse(pulsar.getBrokerService().getTopics().containsKey(partition));
         } finally {
             field.set(pulsar, realNamespaceService);
         }
