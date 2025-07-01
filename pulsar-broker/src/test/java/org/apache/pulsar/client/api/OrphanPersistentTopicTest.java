@@ -155,7 +155,7 @@ public class OrphanPersistentTopicTest extends ProducerConsumerBase {
         // Once the first load topic times out, immediately to load the topic again.
         Producer<byte[]> producer = pulsarClient.newProducer().topic(tpName).create();
         for (int i = 0; i < 10; i++) {
-            MessageId send = producer.send("msg".getBytes());
+            MessageId send = producer.sendAsync("msg".getBytes()).get(3, TimeUnit.SECONDS);
             Thread.sleep(100);
             assertNotNull(send);
         }

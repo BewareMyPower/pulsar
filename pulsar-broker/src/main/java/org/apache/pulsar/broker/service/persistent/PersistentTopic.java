@@ -58,6 +58,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.function.BiFunction;
 import lombok.Getter;
+import lombok.Setter;
 import lombok.Value;
 import org.apache.bookkeeper.client.BKException.BKNoSuchLedgerExistsException;
 import org.apache.bookkeeper.client.BKException.BKNoSuchLedgerExistsOnMetadataServerException;
@@ -320,6 +321,8 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
     // The last position that can be dispatched to consumers
     private volatile Position lastDispatchablePosition;
+    @Setter
+    private volatile boolean closeManagedLedger = true;
 
     /***
      * We use 3 futures to prevent a new closing if there is an in-progress deletion or closing.  We make Pulsar return
@@ -1792,7 +1795,11 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
             }
         }, null));
 
-        disconnectClientsInCurrentCall.thenRun(closeLedgerAfterCloseClients).exceptionally(exception -> {
+        disconnectClientsInCurrentCall.thenRun(() -> {
+            if (closeManagedLedger) {
+                closeLedgerAfterCloseClients.run();
+            }
+        }).exceptionally(exception -> {
             log.error("[{}] Error closing topic", topic, exception);
             unfenceTopicToResume();
             closeFuture.completeExceptionally(exception);

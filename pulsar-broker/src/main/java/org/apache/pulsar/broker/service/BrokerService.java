@@ -1874,6 +1874,8 @@ public class BrokerService implements Closeable {
                                                             + "which is not expected. Closing the current one", topic);
                                                 }
                                                 executor().submit(() -> {
+                                                    // The managed ledger might be held by a new PersistentTopic
+                                                    persistentTopic.setCloseManagedLedger(false);
                                                     persistentTopic.close().whenComplete((ignore, ex) -> {
                                                         topics.remove(topic, topicFuture);
                                                         if (ex != null) {
