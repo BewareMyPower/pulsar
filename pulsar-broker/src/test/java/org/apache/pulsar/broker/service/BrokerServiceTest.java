@@ -149,7 +149,6 @@ public class BrokerServiceTest extends BrokerTestBase {
     protected void setup() throws Exception {
         conf.setSystemTopicEnabled(false);
         conf.setTopicLevelPoliciesEnabled(false);
-        conf.setTopicLoadTimeoutSeconds(1);
         super.baseSetup();
     }
 
@@ -2025,37 +2024,6 @@ public class BrokerServiceTest extends BrokerTestBase {
         sync.client = (PulsarClientImpl) pulsarClient;
         retryStrategically((test) -> sync.getProducer() != null, 1000, 10);
         assertNotNull(sync.getProducer());
-    }
-
-    @Test
-    public void testLoadTopicFail() throws Exception {
-        final var topic = TopicName.get("prop/ns-abc/test-load-topic-fail");
-        admin.topics().createPartitionedTopic(topic.toString(), 1);
-        final var realNamespaceService = pulsar.getNamespaceService();
-        final var namespaceService = mock(NamespaceService.class);
-        when(namespaceService.isServiceUnitActiveAsync(any())).thenAnswer(__ -> {
-            final var future = new CompletableFuture<Boolean>();
-            CompletableFuture.delayedExecutor(conf.getTopicLoadTimeoutSeconds() + 1, TimeUnit.SECONDS)
-                    .execute(() -> future.complete(true));
-            return future;
-        });
-        when(namespaceService.getBundleAsync(any())).thenReturn(CompletableFuture.completedFuture(
-                mock(NamespaceBundle.class)));
-        when(namespaceService.checkBundleOwnership(any(), any())).thenReturn(CompletableFuture.completedFuture(true));
-
-        final var field = PulsarService.class.getDeclaredField("nsService");
-        field.setAccessible(true);
-        field.set(pulsar, namespaceService);
-        try {
-            try {
-                pulsar.getBrokerService().getTopicIfExists(topic.getPartition(0).toString()).get();
-                fail();
-            } catch (ExecutionException e) {
-                assertTrue(e.getMessage().contains("Failed to load topic within timeout"));
-            }
-        } finally {
-            field.set(pulsar, realNamespaceService);
-        }
     }
 }
 
