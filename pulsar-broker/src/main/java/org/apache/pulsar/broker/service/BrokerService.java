@@ -98,6 +98,7 @@ import org.apache.bookkeeper.mledger.impl.NonAppendableLedgerOffloader;
 import org.apache.bookkeeper.mledger.util.Futures;
 import org.apache.commons.collections4.MapUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.pulsar.bookie.rackawareness.IsolatedBookieEnsemblePlacementPolicy;
 import org.apache.pulsar.broker.PulsarServerException;
@@ -1178,8 +1179,21 @@ public class BrokerService implements Closeable {
                         log.error(errorInfo, rc);
                         throw FutureUtil.wrapToCompletionException(new ServiceUnitNotReadyException(errorInfo));
                     }).thenCompose(optionalTopicPolicies -> {
-                        return topics.computeIfAbsent(topicName.toString(),
-                                (tpName) -> loadOrCreatePersistentTopic(tpName, createIfMissing, properties));
+                        final var inserted = new MutableBoolean(false);
+                        final var topic = topics.computeIfAbsent(topicName.toString(), tpName -> {
+                            inserted.setTrue();
+                            return loadOrCreatePersistentTopic(tpName, createIfMissing, properties);
+                        });
+                        if (inserted.isTrue()) {
+                            topic.exceptionallyAsync(e -> {
+                                if (topics.remove(topicName.toString(), topic)) {
+                                    log.info("Removed failed topic future for {} (failure: {})", topicName,
+                                            e.getMessage());
+                                }
+                                return Optional.empty();
+                            });
+                        }
+                        return topic;
                     });
                 });
             } else {
