@@ -1663,9 +1663,12 @@ public class BrokerService implements Closeable {
                 Duration.ofSeconds(pulsar.getConfiguration().getTopicLoadTimeoutSeconds()), executor(),
                 () -> FAILED_TO_LOAD_TOPIC_TIMEOUT_EXCEPTION);
 
-        topicFuture.exceptionally(t -> {
+        topicFuture.exceptionallyAsync(t -> {
             pulsarStats.recordTopicLoadFailed();
-            return null;
+            if (topics.remove(topic, topicFuture)) {
+                log.info("Removed topic {} due to failure {}", topic, t.getMessage());
+            }
+            return Optional.empty();
         });
 
         checkTopicNsOwnership(topic)
