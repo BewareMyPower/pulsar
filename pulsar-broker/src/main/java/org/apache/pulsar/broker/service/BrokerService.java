@@ -86,6 +86,7 @@ import lombok.Getter;
 import lombok.Setter;
 import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.common.util.OrderedScheduler;
+import org.apache.bookkeeper.mledger.AsyncCallbacks;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.DeleteLedgerCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.OpenLedgerCallback;
 import org.apache.bookkeeper.mledger.LedgerOffloader;
@@ -328,6 +329,11 @@ public class BrokerService implements Closeable {
 
     private final TopicEventsDispatcher topicEventsDispatcher = new TopicEventsDispatcher();
     private volatile boolean unloaded = false;
+    private final Set<ManagedLedger> orphanManagedLedgers = new HashSet<>();
+    private ScheduledFuture<?> clearOrphanManagedLedgerTask = null;
+    @VisibleForTesting
+    @Setter
+    private int clearOrphanManagedLedgerDelayMs = 1000 * 60; // 1 minute
 
     public BrokerService(PulsarService pulsar, EventLoopGroup eventLoopGroup) throws Exception {
         this.pulsar = pulsar;
@@ -1376,7 +1382,7 @@ public class BrokerService implements Closeable {
         topicFuture.exceptionally(t -> {
             pulsarStats.recordTopicLoadFailed();
             pulsar.getExecutor().execute(() -> topics.remove(topic, topicFuture));
-            return null;
+            return Optional.empty();
         });
         final long topicCreateTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime());
         NonPersistentTopic nonPersistentTopic;
@@ -1875,6 +1881,7 @@ public class BrokerService implements Closeable {
                                                 }
                                                 executor().submit(() -> {
                                                     // The managed ledger might be held by a new PersistentTopic
+                                                    scheduleCloseOrphanManagedLedgers(ledger);
                                                     persistentTopic.setCloseManagedLedger(false);
                                                     persistentTopic.close().whenComplete((ignore, ex) -> {
                                                         topics.remove(topic, topicFuture);
@@ -1885,6 +1892,9 @@ public class BrokerService implements Closeable {
                                                     });
                                                 });
                                             } else {
+                                                synchronized (orphanManagedLedgers) {
+                                                    orphanManagedLedgers.remove(persistentTopic.getManagedLedger());
+                                                }
                                                 addTopicToStatsMaps(topicName, persistentTopic);
                                             }
                                         })
@@ -3816,6 +3826,43 @@ public class BrokerService implements Closeable {
     @VisibleForTesting
     public void setPulsarChannelInitializerFactory(PulsarChannelInitializer.Factory factory) {
         this.pulsarChannelInitFactory = factory;
+    }
+
+    private void scheduleCloseOrphanManagedLedgers(ManagedLedger managedLedger) {
+        synchronized (orphanManagedLedgers) {
+            orphanManagedLedgers.add(managedLedger);
+            if (clearOrphanManagedLedgerTask != null) {
+                return;
+            }
+            clearOrphanManagedLedgerTask = pulsar.getExecutor().schedule(() -> {
+                synchronized (orphanManagedLedgers) {
+                    if (!orphanManagedLedgers.isEmpty()) {
+                        log.info("Closing {} orphan managed ledgers", orphanManagedLedgers.size());
+                        orphanManagedLedgers.forEach(ml -> {
+                            ml.asyncClose(new AsyncCallbacks.CloseCallback() {
+                                @Override
+                                public void closeComplete(Object ctx) {
+                                    log.info("Closed orphan managed ledger {}", ml.getName());
+                                }
+
+                                @Override
+                                public void closeFailed(ManagedLedgerException exception, Object ctx) {
+                                    log.info("Failed to close orphan managed ledger {}", ml.getName(), exception);
+                                }
+                            }, null);
+                        });
+                        orphanManagedLedgers.clear();
+                    }
+                    clearOrphanManagedLedgerTask = null;
+                }
+            }, 1, TimeUnit.MINUTES);
+        }
+    }
+
+    public void setClearOrphanManagedLedgerDelayMs(int clearOrphanManagedLedgerDelayMs) {
+        synchronized (orphanManagedLedgers) {
+            this.clearOrphanManagedLedgerDelayMs = clearOrphanManagedLedgerDelayMs;
+        }
     }
 
     @AllArgsConstructor
