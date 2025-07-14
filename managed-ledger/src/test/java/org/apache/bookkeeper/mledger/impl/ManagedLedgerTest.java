@@ -4485,4 +4485,9 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
         Assert.assertEquals(ml.getLedgersInfo().get(firstLedger).getPropertiesCount(), 0);
         Assert.assertEquals(ml.getLedgersInfo().get(lastLedger).getPropertiesCount(), 0);
     }
+
+    @Test
+    public void testConcurrentReplay() throws Exception {
+        // TODO:
+    }
 }

@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.broker;
+package org.apache.bookkeeper.mledger;
 
 import java.util.List;
 import java.util.Map;
@@ -25,13 +25,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.bookkeeper.mledger.AsyncCallbacks;
-import org.apache.bookkeeper.mledger.Entry;
-import org.apache.bookkeeper.mledger.ManagedCursor;
-import org.apache.bookkeeper.mledger.ManagedLedger;
-import org.apache.bookkeeper.mledger.ManagedLedgerException;
-import org.apache.bookkeeper.mledger.Position;
-import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.util.FutureUtil;
 
@@ -40,8 +33,8 @@ import org.apache.pulsar.common.util.FutureUtil;
  * 1. A snapshot stored in an external service (e.g. metadata store or a system topic), which represents the metadata
  *    until the position.
  * 2. The entries started from that position.
- * To get the 2nd part, a managed cursor is required for replaying entries of the topic from the position.
- * For example, given a topic with 1 ledger and 10 entries.
+ * To get the 2nd part, a managed cursor is required for replaying entries of the managed ledger from the position.
+ * For example, given a managed ledger with 1 ledger and 10 entries.
  * - Task 1: snapshot position is (0, 1), create a cursor to read entry range [1, 10) and process these 9 entries.
  * - Task 2: snapshot position is (0, 5), create a cursor to read entry range [5, 10) and process these 5 entries.
  * There will be two managed cursors created to read entries separately, which is a waste or resource.
@@ -54,7 +47,7 @@ import org.apache.pulsar.common.util.FutureUtil;
 // TODO: move it to managed-ledger module
 @RequiredArgsConstructor
 @Slf4j
-public class TopicReplayService {
+public class ManagedLedgerReplayService {
 
     private final Map<String, ReplayTask> replayTasks = new ConcurrentHashMap<>();
     private final ManagedLedger managedLedger;
