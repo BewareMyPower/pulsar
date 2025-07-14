@@ -70,6 +70,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
@@ -82,6 +83,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
+import java.util.stream.IntStream;
 import lombok.Cleanup;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -123,6 +125,7 @@ import org.apache.bookkeeper.mledger.ManagedLedgerException.MetaStoreException;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactoryConfig;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactoryMXBean;
+import org.apache.bookkeeper.mledger.ManagedLedgerReplayService;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionBound;
 import org.apache.bookkeeper.mledger.PositionFactory;
@@ -4488,6 +4491,40 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
 
     @Test
     public void testConcurrentReplay() throws Exception {
-        // TODO:
+        final var ml = factory.open("testConcurrentReplay");
+        final var positions = new ArrayList<Position>();
+        for (int i = 0; i < 10; i++) {
+            positions.add(ml.addEntry(("msg-" + i).getBytes()));
+        }
+        final var maxEntriesPerRead = 3;
+        final var replayService = new ManagedLedgerReplayService(ml, maxEntriesPerRead);
+        final var task1 = new TestReplayTask(positions.get(1));
+        final var task2 = new TestReplayTask(positions.get(5));
+        Map.of("A", task1, "B", task2).forEach(replayService::register);
+
+        final var taskNotRegistered = new TestReplayTask(positions.get(0));
+        // These register operations should all fail silently
+        replayService.register("A", taskNotRegistered);
+        replayService.register("B", taskNotRegistered);
+
+        final var readCount = new AtomicInteger(0);
+        final Executor customExecutor = runnable -> {
+            runnable.run();
+            readCount.incrementAndGet();
+        };
+
+        final var position = replayService.replay(customExecutor).get();
+        assertEquals(position, positions.get(positions.size() - 1));
+
+        task1.assertBufferReleased();
+        task2.assertBufferReleased();
+        assertTrue(taskNotRegistered.processedValues.isEmpty());
+        assertEquals(task1.processedValues, IntStream.range(2, 10).mapToObj(i -> "msg-" + i).toList());
+        assertEquals(task2.processedValues, IntStream.range(6, 10).mapToObj(i -> "msg-" + i).toList());
+        // 1 for creating the cursor, 1 + N as the execution count of read callbacks
+        assertEquals(readCount.get(), 2 + task1.processedValues.size() / maxEntriesPerRead);
+
+        ml.close();
     }
+
 }
