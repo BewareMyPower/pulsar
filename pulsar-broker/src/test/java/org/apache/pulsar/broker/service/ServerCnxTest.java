@@ -1583,8 +1583,8 @@ public class ServerCnxTest {
         setChannelConnected();
 
         // Force the case where the broker doesn't own any topic
-        doReturn(CompletableFuture.completedFuture(false)).when(namespaceService)
-                .isServiceUnitActiveAsync(any(TopicName.class));
+        doReturn(CompletableFuture.failedFuture(new ServiceUnitNotReadyException(""))).when(brokerService)
+                .checkTopicNsOwnership(any(String.class));
 
         // test PRODUCER failure case
         ByteBuf clientCommand = Commands.newProducer(nonOwnedTopicName, 1 /* producer id */, 1 /* request id */,
