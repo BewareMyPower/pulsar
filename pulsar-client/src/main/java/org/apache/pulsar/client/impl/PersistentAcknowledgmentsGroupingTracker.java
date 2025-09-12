@@ -331,12 +331,10 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
         BitSet bitSet = pendingIndividualBatchIndexAcks.computeIfAbsent(
                 MessageIdAdvUtils.discardBatch(msgId), __ -> {
                     final var ackSet = msgId.getAckSet();
-                    final var size = msgId.getBatchSize();
                     if (ackSet != null) {
-                        synchronized (ackSet) {
-                            return (BitSet) ackSet.clone();
-                        }
+                        return ackSet;
                     } else {
+                        final var size = msgId.getBatchSize();
                         final var newAckSet = new BitSet(size);
                         newAckSet.set(0, size);
                         return newAckSet;
