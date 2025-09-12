@@ -50,7 +50,6 @@ import org.apache.pulsar.client.util.TimedCompletableFuture;
 import org.apache.pulsar.common.api.proto.CommandAck.AckType;
 import org.apache.pulsar.common.protocol.Commands;
 import org.apache.pulsar.common.util.FutureUtil;
-import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -304,7 +303,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
     }
 
     private CompletableFuture<Void> doCumulativeAck(MessageIdAdv messageId, Map<String, Long> properties,
-                                                    BitSetRecyclable bitSet) {
+                                                    BitSet bitSet) {
         consumer.getStats().incrementNumAcksSent(consumer.getUnAckedMessageTracker().removeMessagesTill(messageId));
         if (acknowledgementGroupTimeMicros == 0 || (properties != null && !properties.isEmpty())) {
             // We cannot group acks if the delay is 0 or when there are properties attached to it. Fortunately that's an
@@ -346,7 +345,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
         return CompletableFuture.completedFuture(null);
     }
 
-    private void doCumulativeAckAsync(MessageIdAdv msgId, BitSetRecyclable bitSet) {
+    private void doCumulativeAckAsync(MessageIdAdv msgId, BitSet bitSet) {
         // Handle concurrent updates from different threads
         lastCumulativeAck.update(msgId, bitSet);
     }
@@ -357,7 +356,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
             return doImmediateBatchIndexAck(batchMessageId, batchMessageId.getBatchIndex(),
                     batchMessageId.getBatchSize(), AckType.Cumulative, properties);
         } else {
-            BitSetRecyclable bitSet = BitSetRecyclable.create();
+            BitSet bitSet = new BitSet(batchMessageId.getBatchSize());
             bitSet.set(0, batchMessageId.getBatchSize());
             bitSet.clear(0, batchMessageId.getBatchIndex() + 1);
             return doCumulativeAck(batchMessageId, null, bitSet);
@@ -365,7 +364,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
     }
 
     private CompletableFuture<Void> doImmediateAck(MessageIdAdv msgId, AckType ackType, Map<String, Long> properties,
-                                                   BitSetRecyclable bitSet) {
+                                                   BitSet bitSet) {
         ClientCnx cnx = consumer.getClientCnx();
 
         if (cnx == null) {
@@ -383,14 +382,14 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
             return FutureUtil.failedFuture(new PulsarClientException
                     .ConnectException("Consumer connect fail! consumer state:" + consumer.getState()));
         }
-        BitSetRecyclable bitSet;
+        BitSet bitSet;
         BitSet ackSetFromMsgId = msgId.getAckSet();
         if (ackSetFromMsgId != null) {
             synchronized (ackSetFromMsgId) {
-                bitSet = BitSetRecyclable.valueOf(ackSetFromMsgId.toLongArray());
+                bitSet = BitSet.valueOf(ackSetFromMsgId.toLongArray());
             }
         } else {
-            bitSet = BitSetRecyclable.create();
+            bitSet = new BitSet(batchSize);
             bitSet.set(0, batchSize);
         }
         if (ackType == AckType.Cumulative) {
@@ -399,10 +398,8 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
             bitSet.clear(batchIndex);
         }
 
-        CompletableFuture<Void> completableFuture = newMessageAckCommandAndWrite(cnx, consumer.consumerId,
+        return newMessageAckCommandAndWrite(cnx, consumer.consumerId,
                 msgId.getLedgerId(), msgId.getEntryId(), bitSet, ackType, properties, true, null, null);
-        bitSet.recycle();
-        return completableFuture;
     }
 
     /**
@@ -434,7 +431,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
             shouldFlush = true;
             final MessageIdAdv messageId = lastCumulativeAckToFlush.getMessageId();
             newMessageAckCommandAndWrite(cnx, consumer.consumerId, messageId.getLedgerId(), messageId.getEntryId(),
-                    lastCumulativeAckToFlush.getBitSetRecyclable(), AckType.Cumulative,
+                    lastCumulativeAckToFlush.getBitSet(), AckType.Cumulative,
                     Collections.emptyMap(), false,
                     (TimedCompletableFuture<Void>) this.currentCumulativeAckFuture, null);
             this.consumer.unAckedChunkedMessageIdSequenceMap.remove(messageId);
@@ -527,7 +524,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
     }
 
     private CompletableFuture<Void> newImmediateAckAndFlush(long consumerId, MessageIdAdv msgId,
-                                                            BitSetRecyclable bitSet, AckType ackType,
+                                                            BitSet bitSet, AckType ackType,
                                                             Map<String, Long> map, ClientCnx cnx) {
         MessageIdImpl[] chunkMsgIds = this.consumer.unAckedChunkedMessageIdSequenceMap.remove(msgId);
         final CompletableFuture<Void> completableFuture;
@@ -560,7 +557,7 @@ public class PersistentAcknowledgmentsGroupingTracker implements Acknowledgments
 
     private CompletableFuture<Void> newMessageAckCommandAndWrite(
             ClientCnx cnx, long consumerId, long ledgerId,
-            long entryId, BitSetRecyclable ackSet, AckType ackType,
+            long entryId, BitSet ackSet, AckType ackType,
             Map<String, Long> properties, boolean flush,
             TimedCompletableFuture<Void> timedCompletableFuture,
             List<Triple<Long, Long, BitSet>> entriesToAck) {
@@ -641,15 +638,12 @@ class LastCumulativeAck {
     public static final MessageIdAdv DEFAULT_MESSAGE_ID = (MessageIdAdv) MessageId.earliest;
 
     private volatile MessageIdAdv messageId = DEFAULT_MESSAGE_ID;
-    private BitSetRecyclable bitSetRecyclable = null;
+    private BitSet bitSet = null;
     private boolean flushRequired = false;
 
-    public synchronized void update(final MessageIdAdv messageId, final BitSetRecyclable bitSetRecyclable) {
+    public synchronized void update(final MessageIdAdv messageId, final BitSet bitSet) {
         if (compareTo(messageId) < 0) {
-            if (this.bitSetRecyclable != null && this.bitSetRecyclable != bitSetRecyclable) {
-                this.bitSetRecyclable.recycle();
-            }
-            set(messageId, bitSetRecyclable);
+            set(messageId, bitSet);
             flushRequired = true;
         }
     }
@@ -657,8 +651,8 @@ class LastCumulativeAck {
     public synchronized LastCumulativeAck flush() {
         if (flushRequired) {
             final LastCumulativeAck localLastCumulativeAck = LOCAL_LAST_CUMULATIVE_ACK.get();
-            if (bitSetRecyclable != null) {
-                localLastCumulativeAck.set(messageId, BitSetRecyclable.valueOf(bitSetRecyclable.toLongArray()));
+            if (bitSet != null) {
+                localLastCumulativeAck.set(messageId, BitSet.valueOf(bitSet.toLongArray()));
             } else {
                 localLastCumulativeAck.set(this.messageId, null);
             }
@@ -671,11 +665,8 @@ class LastCumulativeAck {
     }
 
     public synchronized void reset() {
-        if (bitSetRecyclable != null) {
-            bitSetRecyclable.recycle();
-        }
         messageId = DEFAULT_MESSAGE_ID;
-        bitSetRecyclable = null;
+        bitSet = null;
         flushRequired = false;
     }
 
@@ -694,16 +685,16 @@ class LastCumulativeAck {
         );
     }
 
-    private synchronized void set(final MessageIdAdv messageId, final BitSetRecyclable bitSetRecyclable) {
+    private synchronized void set(final MessageIdAdv messageId, final BitSet bitSet) {
         this.messageId = messageId;
-        this.bitSetRecyclable = bitSetRecyclable;
+        this.bitSet = bitSet;
     }
 
     @Override
     public String toString() {
         String s = messageId.toString();
-        if (bitSetRecyclable != null) {
-            s += " (bit set: " + bitSetRecyclable + ")";
+        if (bitSet != null) {
+            s += " (bit set: " + bitSet + ")";
         }
         return s;
     }
