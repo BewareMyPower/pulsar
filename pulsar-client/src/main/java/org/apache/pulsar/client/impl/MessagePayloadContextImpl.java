@@ -22,7 +22,6 @@ import static org.apache.pulsar.common.protocol.Commands.DEFAULT_CONSUMER_EPOCH;
 import io.netty.buffer.ByteBuf;
 import io.netty.util.Recycler;
 import java.util.BitSet;
-import java.util.List;
 import lombok.NonNull;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessagePayload;
@@ -32,8 +31,6 @@ import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 import org.apache.pulsar.common.api.proto.KeyValue;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.apache.pulsar.common.api.proto.SingleMessageMetadata;
-import org.apache.pulsar.common.util.SafeCollectionUtils;
-import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 
 public class MessagePayloadContextImpl implements MessagePayloadContext {
 
@@ -52,7 +49,7 @@ public class MessagePayloadContextImpl implements MessagePayloadContext {
     private ConsumerImpl<?> consumer;
     private int redeliveryCount;
     private BitSet ackSetInMessageId;
-    private BitSetRecyclable ackBitSet;
+    private BitSet ackBitSet;
     private long consumerEpoch;
 
     private MessagePayloadContextImpl(final Recycler.Handle<MessagePayloadContextImpl> handle) {
@@ -64,7 +61,7 @@ public class MessagePayloadContextImpl implements MessagePayloadContext {
                                                 @NonNull final MessageIdImpl messageId,
                                                 @NonNull final ConsumerImpl<?> consumer,
                                                 final int redeliveryCount,
-                                                final List<Long> ackSet,
+                                                final long[] ackSet,
                                                 final long consumerEpoch) {
         final MessagePayloadContextImpl context = RECYCLER.get();
         context.consumerEpoch = consumerEpoch;
@@ -75,9 +72,7 @@ public class MessagePayloadContextImpl implements MessagePayloadContext {
         context.consumer = consumer;
         context.redeliveryCount = redeliveryCount;
         context.ackSetInMessageId = BatchMessageIdImpl.newAckSet(context.getNumMessages());
-        context.ackBitSet = (ackSet != null && ackSet.size() > 0)
-                ? BitSetRecyclable.valueOf(SafeCollectionUtils.longListToArray(ackSet))
-                : null;
+        context.ackBitSet = (ackSet.length > 0 ? BitSet.valueOf(ackSet) : null);
         return context;
     }
 
@@ -90,10 +85,7 @@ public class MessagePayloadContextImpl implements MessagePayloadContext {
         redeliveryCount = 0;
         consumerEpoch = DEFAULT_CONSUMER_EPOCH;
         ackSetInMessageId = null;
-        if (ackBitSet != null) {
-            ackBitSet.recycle();
-            ackBitSet = null;
-        }
+        ackBitSet = null;
         recyclerHandle.recycle(this);
     }
 
