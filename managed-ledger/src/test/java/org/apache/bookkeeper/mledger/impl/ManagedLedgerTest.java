@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
@@ -4608,7 +4609,11 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
         final var context = new AddEntryContext();
         final var future = bkc.promiseAfter(2);
         CompletableFuture.delayedExecutor(100, TimeUnit.MILLISECONDS).execute(() ->
-                future.completeExceptionally(new IllegalStateException("fail")));
+                future.completeExceptionally(new BKException.BKNotEnoughBookiesException()));
+        for (int i = 0; i < 5; i++) {
+            bkc.addEntryDelay(20, TimeUnit.MILLISECONDS);
+        }
+
         for (int i = 0; i < 5; i++) {
             final var value = "msg-" + i;
             ml.asyncAddEntry(value.getBytes(), new AddEntryCallback() {
@@ -4658,8 +4663,12 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
             valueBuffer.readBytes(valueBytes);
             final var offset = buffer.component(0).readLong();
             final var value = new String(valueBytes, UTF_8);
-            //context.endOffset = offset + 1;
             log.info("Sent {} to {} (endOffset: {})", value, offset, context.endOffset);
+        }
+
+        @Override
+        public void afterFailedAddEntry(int numberOfMessages) {
+            // TODO: use context instead
         }
 
         @Override
