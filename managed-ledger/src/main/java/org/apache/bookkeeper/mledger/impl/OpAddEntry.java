@@ -290,6 +290,14 @@ public class OpAddEntry implements AddCallback, CloseCallback, Runnable, Managed
             updateLatency();
             AddEntryCallback cb = callbackUpdater.getAndSet(this, null);
             if (cb != null) {
+                final var interceptor = ml.getManagedLedgerInterceptor();
+                if (interceptor != null) {
+                    try {
+                        interceptor.afterAddEntry(lastEntry, data, ctx);
+                    } catch (Throwable throwable) {
+                        log.error("Failed afterAddEntry on {}", lastEntry, throwable);
+                    }
+                }
                 cb.addComplete(lastEntry, data.asReadOnly(), ctx);
                 ml.notifyCursors();
                 ml.notifyWaitingEntryCallBacks();

@@ -45,6 +45,8 @@ import static org.testng.Assert.fail;
 import com.google.common.collect.Sets;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.CompositeByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import java.lang.reflect.Field;
 import java.nio.ReadOnlyBufferException;
@@ -130,6 +132,7 @@ import org.apache.bookkeeper.mledger.impl.ManagedCursorImpl.VoidCallback;
 import org.apache.bookkeeper.mledger.impl.MetaStore.MetaStoreCallback;
 import org.apache.bookkeeper.mledger.impl.cache.EntryCache;
 import org.apache.bookkeeper.mledger.impl.cache.EntryCacheManager;
+import org.apache.bookkeeper.mledger.intercept.ManagedLedgerInterceptor;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo;
 import org.apache.bookkeeper.mledger.proto.MLDataFormats.ManagedLedgerInfo.LedgerInfo;
@@ -139,6 +142,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.lang3.mutable.MutableBoolean;
 import org.apache.commons.lang3.mutable.MutableObject;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.proto.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.common.policies.data.EnsemblePlacementPolicyConfig;
 import org.apache.pulsar.common.policies.data.OffloadPoliciesImpl;
@@ -4592,5 +4596,84 @@ public class ManagedLedgerTest extends MockedBookKeeperTestCase {
 
         Assert.assertEquals(ml.getLedgersInfo().get(firstLedger).getPropertiesCount(), 0);
         Assert.assertEquals(ml.getLedgersInfo().get(lastLedger).getPropertiesCount(), 0);
+    }
+
+    @Test
+    public void testInterceptor() throws Exception {
+        final var interceptor = new ManagedLedgerInterceptorImpl();
+        final var config = new ManagedLedgerConfig();
+        config.setManagedLedgerInterceptor(interceptor);
+        final var ml = (ManagedLedgerImpl) factory.open("test-interceptor", config);
+
+        final var context = new AddEntryContext();
+        final var future = bkc.promiseAfter(2);
+        CompletableFuture.delayedExecutor(100, TimeUnit.MILLISECONDS).execute(() ->
+                future.completeExceptionally(new IllegalStateException("fail")));
+        for (int i = 0; i < 5; i++) {
+            final var value = "msg-" + i;
+            ml.asyncAddEntry(value.getBytes(), new AddEntryCallback() {
+                @Override
+                public void addComplete(Position position, ByteBuf entryData, Object ctx) {
+                    log.info("complete {} with {}", value, position);
+                }
+
+                @Override
+                public void addFailed(ManagedLedgerException exception, Object ctx) {
+                    log.info("fail {} with {}", value, exception.getMessage());
+                }
+            }, context);
+        }
+        Thread.sleep(1000);
+    }
+
+    static class AddEntryContext {
+
+        long endOffset = 0;
+    }
+
+    static class ManagedLedgerInterceptorImpl implements ManagedLedgerInterceptor {
+
+        @Override
+        public void beforeAddEntry(AddEntryOperation op, int numberOfMessages) {
+            final var context = (AddEntryContext) op.getCtx();
+            long nextOffset = context.endOffset;
+            final var compositeBuf = PulsarByteBufAllocator.DEFAULT.compositeBuffer();
+            final var offsetBuffer = Unpooled.buffer(8);
+            offsetBuffer.writeLong(nextOffset);
+            compositeBuf.addComponents(offsetBuffer);
+            compositeBuf.addComponents(op.getData());
+            op.setData(compositeBuf);
+
+            context.endOffset = nextOffset + 1;
+            log.info("Updated endOffset to {}", context.endOffset);
+        }
+
+
+        @Override
+        public void afterAddEntry(Position position, ByteBuf data, Object ctx) {
+            final var context = (AddEntryContext) ctx;
+            final var buffer = (CompositeByteBuf) data;
+            final var valueBuffer = ((CompositeByteBuf) data).component(1);
+            final var valueBytes = new byte[valueBuffer.readableBytes()];
+            valueBuffer.readBytes(valueBytes);
+            final var offset = buffer.component(0).readLong();
+            final var value = new String(valueBytes, UTF_8);
+            //context.endOffset = offset + 1;
+            log.info("Sent {} to {} (endOffset: {})", value, offset, context.endOffset);
+        }
+
+        @Override
+        public void onManagedLedgerPropertiesInitialize(Map<String, String> propertiesMap) {
+        }
+
+        @Override
+        public CompletableFuture<Void> onManagedLedgerLastLedgerInitialize(String name,
+                                                                           LastEntryHandle lastEntryHandle) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        @Override
+        public void onUpdateManagedLedgerInfo(Map<String, String> propertiesMap) {
+        }
     }
 }

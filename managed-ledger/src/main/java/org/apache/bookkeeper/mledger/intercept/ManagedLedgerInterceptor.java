@@ -25,6 +25,7 @@ import java.util.concurrent.CompletableFuture;
 import org.apache.bookkeeper.common.annotation.InterfaceAudience;
 import org.apache.bookkeeper.common.annotation.InterfaceStability;
 import org.apache.bookkeeper.mledger.Entry;
+import org.apache.bookkeeper.mledger.Position;
 
 /**
  * Interceptor for ManagedLedger.
@@ -60,6 +61,12 @@ public interface ManagedLedgerInterceptor {
      * @param numberOfMessages
      */
     void beforeAddEntry(AddEntryOperation op, int numberOfMessages);
+
+    /**
+     * Called before the `asyncAddEntry` callback is called.
+     */
+    default void afterAddEntry(Position position, ByteBuf data, Object ctx) {
+    }
 
     /**
      * Intercept When add entry failed.
