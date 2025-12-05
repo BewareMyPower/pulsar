@@ -3416,22 +3416,8 @@ public class SimpleProducerConsumerTest extends ProducerConsumerBase {
         MessageCrypto<MessageMetadata, MessageMetadata> crypto =
                 new MessageCryptoBc("test", false);
 
-        MessageMetadata messageMetadata = new MessageMetadata()
-                .setEncryptionParam(encrParam)
-                .setProducerName("test")
-                .setSequenceId(123)
-                .setPublishTime(12333453454L)
-                .setCompression(CompressionCodecProvider.convertToWireProtocol(compressionType))
-                .setUncompressedSize(uncompressedSize);
-        messageMetadata.addEncryptionKey()
-                .setKey(encryptionKeyName)
-                .setValue(dataKey);
-        if (encAlgo != null) {
-            messageMetadata.setEncryptionAlgo(encAlgo);
-        }
-
         ByteBuffer decryptedPayload = ByteBuffer.allocate(crypto.getMaxOutputSize(payloadBuf.remaining()));
-        crypto.decrypt(() -> messageMetadata, payloadBuf, decryptedPayload, reader);
+        crypto.decrypt(msg.getEncryptionCtx().orElseThrow(), payloadBuf, decryptedPayload, reader);
 
         // try to uncompress
         CompressionCodec codec = CompressionCodecProvider.getCompressionCodec(compressionType);

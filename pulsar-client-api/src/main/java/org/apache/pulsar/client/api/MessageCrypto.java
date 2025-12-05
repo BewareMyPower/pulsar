@@ -22,6 +22,7 @@ import java.nio.ByteBuffer;
 import java.util.Set;
 import java.util.function.Supplier;
 import org.apache.pulsar.client.api.PulsarClientException.CryptoException;
+import org.apache.pulsar.common.api.EncryptionContext;
 import org.apache.pulsar.common.classification.InterfaceAudience;
 import org.apache.pulsar.common.classification.InterfaceStability;
 
@@ -31,6 +32,9 @@ import org.apache.pulsar.common.classification.InterfaceStability;
 @InterfaceAudience.Public
 @InterfaceStability.Stable
 public interface MessageCrypto<MetadataT, BuilderT> {
+
+    int DECRYPT_V0 = 0;
+    int DECRYPT_V1 = 1;
 
     int IV_LEN = 12;
 
@@ -92,6 +96,38 @@ public interface MessageCrypto<MetadataT, BuilderT> {
      *
      * @return true if success, false otherwise
      */
+
+    /**
+     * Implement {@link MessageCrypto#decrypt(EncryptionContext, ByteBuffer, ByteBuffer, CryptoKeyReader)} instead.
+     * This method is retained only for backward compatibility for existing custom implementations.
+     */
+    @Deprecated
     boolean decrypt(Supplier<MetadataT> messageMetadataSupplier, ByteBuffer payload,
                  ByteBuffer outBuffer, CryptoKeyReader keyReader);
+
+    /**
+     * @return the version of the `decrypt` method to call
+     *   V0: call {@link MessageCrypto#decrypt(Supplier, ByteBuffer, ByteBuffer, CryptoKeyReader)}
+     *   V1: call {@link MessageCrypto#decrypt(EncryptionContext, ByteBuffer, ByteBuffer, CryptoKeyReader)}
+     *   others: the consumer will fail to decrypt
+     */
+    default int decryptApiVersion() {
+        return DECRYPT_V0;
+    }
+
+    /**
+     * Decrypt the payload using the data key. Keys used to encrypt data key can be retrieved from msgMetadata
+     *
+     * @param context the encryption context
+     * @param payload Message which needs to be decrypted
+     * @param keyReader KeyReader implementation to retrieve key value
+     * @param outBuffer the buffer where to write the encrypted payload. The buffer needs to be have enough space
+     *              to hold the encrypted value. Use #getMaxOutputSize method to discover the max size.
+     *
+     * @return true if success, false otherwise
+     */
+    default boolean decrypt(EncryptionContext context, ByteBuffer payload, ByteBuffer outBuffer,
+                            CryptoKeyReader keyReader) {
+        return false;
+    }
 }
