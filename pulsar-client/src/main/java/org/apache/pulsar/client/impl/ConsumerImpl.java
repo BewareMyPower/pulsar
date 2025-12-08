@@ -1292,7 +1292,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                                   final BitSet ackSetInMessageId,
                                                   final int redeliveryCount,
                                                   final long consumerEpoch,
-                                                  final boolean isEncrypted) {
+                                                  final Optional<EncryptionContext> encryptionContext) {
         if (log.isDebugEnabled()) {
             log.debug("[{}] [{}] processing message num - {} in batch", subscription, consumerName, index);
         }
@@ -1330,7 +1330,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             final ByteBuf payloadBuffer = (singleMessagePayload != null) ? singleMessagePayload : payload;
             final MessageImpl<V> message = MessageImpl.create(topicName.toString(), batchMessageIdImpl,
                     msgMetadata, singleMessageMetadata, payloadBuffer,
-                    createEncryptionContext(msgMetadata, isEncrypted), cnx(), schema, redeliveryCount,
+                    encryptionContext, cnx(), schema, redeliveryCount,
                     poolMessages, consumerEpoch);
             message.setBrokerEntryMetadata(brokerEntryMetadata);
             return message;
@@ -1351,7 +1351,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                             final int redeliveryCount,
                                             final long consumerEpoch) {
         return newMessage(messageId, brokerEntryMetadata, messageMetadata, payload, schema, redeliveryCount,
-                consumerEpoch, false);
+                consumerEpoch, createEncryptionContext(messageMetadata));
     }
 
     protected <V> MessageImpl<V> newMessage(final MessageIdImpl messageId,
@@ -1361,10 +1361,9 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                             final Schema<V> schema,
                                             final int redeliveryCount,
                                             final long consumerEpoch,
-                                            final boolean isEncrypted) {
+                                            final Optional<EncryptionContext> encryptionContext) {
         final MessageImpl<V> message = MessageImpl.create(topicName.toString(), messageId, messageMetadata, payload,
-                createEncryptionContext(messageMetadata, isEncrypted), cnx(), schema, redeliveryCount,
-                poolMessages, consumerEpoch);
+                encryptionContext, cnx(), schema, redeliveryCount, poolMessages, consumerEpoch);
         message.setBrokerEntryMetadata(brokerEntryMetadata);
         return message;
     }
@@ -1476,12 +1475,15 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             return;
         }
 
+        final var encryptionContext = createEncryptionContext(msgMetadata);
         DecryptResult decryptResult = decryptPayloadIfNeeded(messageId, redeliveryCount, msgMetadata, headersAndPayload,
-                cnx);
+                cnx, encryptionContext);
 
         if (decryptResult.shouldDiscard()) {
             // Message was discarded or CryptoKeyReader isn't implemented
             return;
+        } else if (encryptionContext.isPresent() && !decryptResult.success) {
+            encryptionContext.get().setEncrypted(true);
         }
 
         boolean isMessageUndecryptable = !decryptResult.success;
@@ -1548,7 +1550,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
 
             final MessageImpl<T> message =
                     newMessage(msgId, brokerEntryMetadata, msgMetadata, uncompressedPayload,
-                            schema, redeliveryCount, consumerEpoch, isMessageUndecryptable);
+                            schema, redeliveryCount, consumerEpoch, encryptionContext);
             uncompressedPayload.release();
 
             if (deadLetterPolicy != null && possibleSendToDeadLetterTopicMessages != null) {
@@ -1568,7 +1570,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         } else {
             // handle batch message enqueuing; uncompressed payload has all messages in batch
             receiveIndividualMessagesFromBatch(brokerEntryMetadata, msgMetadata, redeliveryCount, ackSet,
-                    uncompressedPayload, messageId, cnx, consumerEpoch, isMessageUndecryptable);
+                    uncompressedPayload, messageId, cnx, consumerEpoch, encryptionContext);
 
             uncompressedPayload.release();
         }
@@ -1769,7 +1771,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     void receiveIndividualMessagesFromBatch(BrokerEntryMetadata brokerEntryMetadata, MessageMetadata msgMetadata,
                                             int redeliveryCount, List<Long> ackSet, ByteBuf uncompressedPayload,
                                             MessageIdData messageId, ClientCnx cnx, long consumerEpoch,
-                                            boolean isEncrypted) {
+                                            Optional<EncryptionContext> encryptionContext) {
         int batchSize = msgMetadata.getNumMessagesInBatch();
 
         // create ack tracker for entry aka batch
@@ -1792,7 +1794,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             for (int i = 0; i < batchSize; ++i) {
                 final MessageImpl<T> message = newSingleMessage(i, batchSize, brokerEntryMetadata, msgMetadata,
                         singleMessageMetadata, uncompressedPayload, batchMessage, schema, true,
-                        ackBitSet, ackSetInMessageId, redeliveryCount, consumerEpoch, isEncrypted);
+                        ackBitSet, ackSetInMessageId, redeliveryCount, consumerEpoch, encryptionContext);
                 if (message == null) {
                     // If it is not in ackBitSet, it means Broker does not want to deliver it to the client, and
                     // did not decrease the permits in the broker-side.
@@ -2017,9 +2019,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
 
     private DecryptResult decryptPayloadIfNeeded(MessageIdData messageId, int redeliveryCount,
                                                  MessageMetadata msgMetadata,
-                                                 ByteBuf payload, ClientCnx currentCnx) {
+                                                 ByteBuf payload, ClientCnx currentCnx,
+                                                 Optional<EncryptionContext> encryptionContext) {
 
-        if (msgMetadata.getEncryptionKeysCount() == 0) {
+        if (encryptionContext.isEmpty() || encryptionContext.get().getKeys().isEmpty()) {
             return DecryptResult.success(payload.retain());
         }
         int batchSize = msgMetadata.getNumMessagesInBatch();
@@ -2031,7 +2034,14 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         int maxDecryptedSize = msgCrypto.getMaxOutputSize(payload.readableBytes());
         ByteBuf decryptedData = PulsarByteBufAllocator.DEFAULT.buffer(maxDecryptedSize);
         ByteBuffer nioDecryptedData = decryptedData.nioBuffer(0, maxDecryptedSize);
-        if (msgCrypto.decrypt(() -> msgMetadata, payload.nioBuffer(), nioDecryptedData, conf.getCryptoKeyReader())) {
+        final var decryptResult = switch (msgCrypto.decryptApiVersion()) {
+            case MessageCrypto.DECRYPT_V0 -> msgCrypto.decrypt(() -> msgMetadata, payload.nioBuffer(), nioDecryptedData,
+                    conf.getCryptoKeyReader());
+            case MessageCrypto.DECRYPT_V1 -> msgCrypto.decrypt(encryptionContext.get(), payload.nioBuffer(),
+                    nioDecryptedData, conf.getCryptoKeyReader());
+            default -> false;
+        };
+        if (decryptResult) {
             decryptedData.writerIndex(nioDecryptedData.limit());
             return DecryptResult.success(decryptedData);
         }
@@ -2932,11 +2942,9 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
      * Create EncryptionContext if message payload is encrypted.
      *
      * @param msgMetadata
-     * @param isEncrypted
      * @return {@link Optional}<{@link EncryptionContext}>
      */
-    private Optional<EncryptionContext> createEncryptionContext(MessageMetadata msgMetadata,
-                                                                boolean isEncrypted) {
+    static Optional<EncryptionContext> createEncryptionContext(MessageMetadata msgMetadata) {
 
         EncryptionContext encryptionCtx = null;
         if (msgMetadata.getEncryptionKeysCount() > 0) {
@@ -2959,7 +2967,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                     .setCompressionType(CompressionCodecProvider.convertFromWireProtocol(msgMetadata.getCompression()));
             encryptionCtx.setUncompressedMessageSize(msgMetadata.getUncompressedSize());
             encryptionCtx.setBatchSize(batchSize);
-            encryptionCtx.setEncrypted(isEncrypted);
+            encryptionCtx.setEncrypted(false);
         }
         return Optional.ofNullable(encryptionCtx);
     }
