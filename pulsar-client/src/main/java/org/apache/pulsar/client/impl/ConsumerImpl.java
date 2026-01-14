@@ -134,10 +134,8 @@ import org.apache.pulsar.common.util.BackoffBuilder;
 import org.apache.pulsar.common.util.CompletableFutureCancellationHandler;
 import org.apache.pulsar.common.util.ExceptionHandler;
 import org.apache.pulsar.common.util.FutureUtil;
-import org.apache.pulsar.common.util.SafeCollectionUtils;
-import org.apache.pulsar.common.util.collections.BitSetRecyclable;
-import org.apache.pulsar.common.util.collections.ConcurrentBitSetRecyclable;
 import org.apache.pulsar.common.util.collections.GrowableArrayBlockingQueue;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1288,7 +1286,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                                   final MessageIdImpl messageId,
                                                   final Schema<V> schema,
                                                   final boolean containMetadata,
-                                                  final BitSetRecyclable ackBitSet,
+                                                  @Nullable final BitSet ackBitSet,
                                                   final BitSet ackSetInMessageId,
                                                   final int redeliveryCount,
                                                   final long consumerEpoch,
@@ -1396,7 +1394,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                                            final MessageIdImpl messageId,
                                            final Schema<T> schema,
                                            final int redeliveryCount,
-                                           final List<Long> ackSet,
+                                           final long[] ackSet,
                                            long consumerEpoch) {
         final MessagePayloadImpl payload = MessagePayloadImpl.create(byteBuf);
         final MessagePayloadContextImpl entryContext = MessagePayloadContextImpl.get(
@@ -1426,12 +1424,14 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     }
 
     void messageReceived(CommandMessage cmdMessage, ByteBuf headersAndPayload, ClientCnx cnx) {
-        List<Long> ackSet = Collections.emptyList();
+        final long[] ackSet;
         if (cmdMessage.getAckSetsCount() > 0) {
-            ackSet = new ArrayList<>(cmdMessage.getAckSetsCount());
+            ackSet = new long[cmdMessage.getAckSetsCount()];
             for (int i = 0; i < cmdMessage.getAckSetsCount(); i++) {
-                ackSet.add(cmdMessage.getAckSetAt(i));
+                ackSet[i] = cmdMessage.getAckSetAt(i);
             }
+        } else {
+            ackSet = new long[0];
         }
         int redeliveryCount = cmdMessage.getRedeliveryCount();
         MessageIdData messageId = cmdMessage.getMessageId();
@@ -1767,7 +1767,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     }
 
     void receiveIndividualMessagesFromBatch(BrokerEntryMetadata brokerEntryMetadata, MessageMetadata msgMetadata,
-                                            int redeliveryCount, List<Long> ackSet, ByteBuf uncompressedPayload,
+                                            int redeliveryCount, long[] ackSet, ByteBuf uncompressedPayload,
                                             MessageIdData messageId, ClientCnx cnx, long consumerEpoch,
                                             boolean isEncrypted) {
         int batchSize = msgMetadata.getNumMessagesInBatch();
@@ -1781,10 +1781,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         }
 
         BitSet ackSetInMessageId = BatchMessageIdImpl.newAckSet(batchSize);
-        BitSetRecyclable ackBitSet = null;
-        if (ackSet != null && ackSet.size() > 0) {
-            ackBitSet = BitSetRecyclable.valueOf(SafeCollectionUtils.longListToArray(ackSet));
-        }
+        BitSet ackBitSet = ackSet.length > 0 ? BitSet.valueOf(ackSet) : null;
 
         SingleMessageMetadata singleMessageMetadata = new SingleMessageMetadata();
         int skippedMessages = 0;
@@ -1817,9 +1814,6 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                     continue;
                 }
                 executeNotifyCallback(message);
-            }
-            if (ackBitSet != null) {
-                ackBitSet.recycle();
             }
         } catch (IllegalStateException e) {
             log.warn("[{}] [{}] unable to obtain message in batch", subscription, consumerName, e);
@@ -2678,11 +2672,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         } else {
             final long[] ackSetArr;
             if (MessageIdAdvUtils.isBatch(msgId)) {
-                final BitSetRecyclable ackSet = BitSetRecyclable.create();
+                final BitSet ackSet = new BitSet();
                 ackSet.set(0, msgId.getBatchSize());
                 ackSet.clear(0, Math.max(msgId.getBatchIndex(), 0));
                 ackSetArr = ackSet.toLongArray();
-                ackSet.recycle();
             } else {
                 ackSetArr = new long[0];
             }
@@ -3166,18 +3159,17 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         final long entryId = messageIdAdv.getEntryId();
         final List<ByteBuf> cmdList;
         if (MessageIdAdvUtils.isBatch(messageIdAdv)) {
-            BitSetRecyclable bitSetRecyclable = BitSetRecyclable.create();
-            bitSetRecyclable.set(0, messageIdAdv.getBatchSize());
+            BitSet bitSet = new BitSet();
+            bitSet.set(0, messageIdAdv.getBatchSize());
             if (ackType == AckType.Cumulative) {
                 MessageIdAdvUtils.acknowledge(messageIdAdv, false);
-                bitSetRecyclable.clear(0, messageIdAdv.getBatchIndex() + 1);
+                bitSet.clear(0, messageIdAdv.getBatchIndex() + 1);
             } else {
-                bitSetRecyclable.clear(messageIdAdv.getBatchIndex());
+                bitSet.clear(messageIdAdv.getBatchIndex());
             }
-            cmdList = Collections.singletonList(Commands.newAck(consumerId, ledgerId, entryId, bitSetRecyclable,
+            cmdList = Collections.singletonList(Commands.newAck(consumerId, ledgerId, entryId, bitSet,
                     ackType, validationError, properties, txnID.getLeastSigBits(), txnID.getMostSigBits(), requestId,
                     messageIdAdv.getBatchSize()));
-            bitSetRecyclable.recycle();
         } else {
             MessageIdImpl[] chunkMsgIds = this.unAckedChunkedMessageIdSequenceMap.remove(messageIdAdv);
             // cumulative ack chunk by the last messageId
@@ -3187,8 +3179,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             } else {
                 if (Commands.peerSupportsMultiMessageAcknowledgment(
                         getClientCnx().getRemoteEndpointProtocolVersion())) {
-                    List<Triple<Long, Long, ConcurrentBitSetRecyclable>> entriesToAck =
-                            new ArrayList<>(chunkMsgIds.length);
+                    List<Triple<Long, Long, BitSet>> entriesToAck = new ArrayList<>(chunkMsgIds.length);
                     for (MessageIdImpl cMsgId : chunkMsgIds) {
                         if (cMsgId != null && chunkMsgIds.length > 1) {
                             entriesToAck.add(Triple.of(cMsgId.getLedgerId(), cMsgId.getEntryId(), null));
@@ -3225,7 +3216,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     }
 
     private ByteBuf newMultiTransactionMessageAck(long consumerId, TxnID txnID,
-                                                  List<Triple<Long, Long, ConcurrentBitSetRecyclable>> entries,
+                                                  List<Triple<Long, Long, BitSet>> entries,
                                                   long requestID) {
         BaseCommand cmd = newMultiMessageAckCommon(entries);
         cmd.getAck()
@@ -3244,7 +3235,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         }
     };
 
-    private static BaseCommand newMultiMessageAckCommon(List<Triple<Long, Long, ConcurrentBitSetRecyclable>> entries) {
+    private static BaseCommand newMultiMessageAckCommon(List<Triple<Long, Long, BitSet>> entries) {
         BaseCommand cmd = LOCAL_BASE_COMMAND.get()
                 .clear()
                 .setType(BaseCommand.Type.ACK);
@@ -3253,7 +3244,7 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         for (int i = 0; i < entriesCount; i++) {
             long ledgerId = entries.get(i).getLeft();
             long entryId = entries.get(i).getMiddle();
-            ConcurrentBitSetRecyclable bitSet = entries.get(i).getRight();
+            BitSet bitSet = entries.get(i).getRight();
             MessageIdData msgId = ack.addMessageId()
                     .setLedgerId(ledgerId)
                     .setEntryId(entryId);
@@ -3262,7 +3253,6 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 for (int j = 0; j < ackSet.length; j++) {
                     msgId.addAckSet(ackSet[j]);
                 }
-                bitSet.recycle();
             }
         }
 
@@ -3279,19 +3269,18 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             messageIdData.setLedgerId(messageIdAdv.getLedgerId());
             messageIdData.setEntryId(messageIdAdv.getEntryId());
             if (MessageIdAdvUtils.isBatch(messageIdAdv)) {
-                final BitSetRecyclable bitSetRecyclable = BitSetRecyclable.create();
-                bitSetRecyclable.set(0, messageIdAdv.getBatchSize());
+                final BitSet bitSet = new BitSet();
+                bitSet.set(0, messageIdAdv.getBatchSize());
                 messageIdData.setBatchSize(messageIdAdv.getBatchSize());
                 if (ackType == AckType.Cumulative) {
                     MessageIdAdvUtils.acknowledge(messageIdAdv, false);
-                    bitSetRecyclable.clear(0, messageIdAdv.getBatchIndex() + 1);
+                    bitSet.clear(0, messageIdAdv.getBatchIndex() + 1);
                 } else {
-                    bitSetRecyclable.clear(messageIdAdv.getBatchIndex());
+                    bitSet.clear(messageIdAdv.getBatchIndex());
                 }
-                for (long x : bitSetRecyclable.toLongArray()) {
+                for (long x : bitSet.toLongArray()) {
                     messageIdData.addAckSet(x);
                 }
-                bitSetRecyclable.recycle();
             }
 
             messageIdDataList.add(messageIdData);

@@ -25,6 +25,7 @@ import com.google.common.collect.Queues;
 import io.netty.util.Timeout;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -70,8 +71,8 @@ import org.apache.pulsar.common.api.proto.CommandAck.AckType;
 import org.apache.pulsar.common.api.proto.CommandSubscribe;
 import org.apache.pulsar.common.api.proto.CommandSubscribe.SubType;
 import org.apache.pulsar.common.util.FutureUtil;
-import org.apache.pulsar.common.util.collections.BitSetRecyclable;
 import org.apache.pulsar.common.util.collections.GrowableArrayBlockingQueue;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -1386,7 +1387,7 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
         return true;
     }
 
-    protected boolean isSingleMessageAcked(BitSetRecyclable ackBitSet, int batchIndex) {
+    protected boolean isSingleMessageAcked(@Nullable BitSet ackBitSet, int batchIndex) {
         return ackBitSet != null && !ackBitSet.get(batchIndex);
     }
 

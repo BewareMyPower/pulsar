@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.BitSet;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,6 @@ import org.apache.pulsar.PulsarVersion;
 import org.apache.pulsar.client.api.KeySharedPolicy;
 import org.apache.pulsar.client.api.ProducerAccessMode;
 import org.apache.pulsar.client.api.Range;
-import org.apache.pulsar.client.api.transaction.TxnID;
 import org.apache.pulsar.common.allocator.PulsarByteBufAllocator;
 import org.apache.pulsar.common.api.AuthData;
 import org.apache.pulsar.common.api.proto.AuthMethod;
@@ -110,8 +110,6 @@ import org.apache.pulsar.common.intercept.BrokerEntryMetadataInterceptor;
 import org.apache.pulsar.common.protocol.schema.SchemaVersion;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.common.util.collections.BitSetRecyclable;
-import org.apache.pulsar.common.util.collections.ConcurrentBitSetRecyclable;
 
 @UtilityClass
 @Slf4j
@@ -1033,25 +1031,14 @@ public class Commands {
         return serializeWithSize(newLookupErrorResponseCommand(error, errorMsg, requestId));
     }
 
-    public static ByteBuf newMultiTransactionMessageAck(long consumerId, TxnID txnID,
-            List<Triple<Long, Long, ConcurrentBitSetRecyclable>> entries) {
-        BaseCommand cmd = newMultiMessageAckCommon(entries);
-        cmd.getAck()
-                .setConsumerId(consumerId)
-                .setAckType(AckType.Individual)
-                .setTxnidLeastBits(txnID.getLeastSigBits())
-                .setTxnidMostBits(txnID.getMostSigBits());
-        return serializeWithSize(cmd);
-    }
-
-    private static BaseCommand newMultiMessageAckCommon(List<Triple<Long, Long, ConcurrentBitSetRecyclable>> entries) {
+    private static BaseCommand newMultiMessageAckCommon(List<Triple<Long, Long, BitSet>> entries) {
         BaseCommand cmd = localCmd(Type.ACK);
         CommandAck ack = cmd.setAck();
         int entriesCount = entries.size();
         for (int i = 0; i < entriesCount; i++) {
             long ledgerId = entries.get(i).getLeft();
             long entryId = entries.get(i).getMiddle();
-            ConcurrentBitSetRecyclable bitSet = entries.get(i).getRight();
+            BitSet bitSet = entries.get(i).getRight();
             MessageIdData msgId = ack.addMessageId()
                     .setLedgerId(ledgerId)
                     .setEntryId(entryId);
@@ -1060,7 +1047,6 @@ public class Commands {
                 for (int j = 0; j < ackSet.length; j++) {
                     msgId.addAckSet(ackSet[j]);
                 }
-                bitSet.recycle();
             }
         }
 
@@ -1068,7 +1054,7 @@ public class Commands {
     }
 
     public static ByteBuf newMultiMessageAck(long consumerId,
-                                             List<Triple<Long, Long, ConcurrentBitSetRecyclable>> entries,
+                                             List<Triple<Long, Long, BitSet>> entries,
                                              long requestId) {
         BaseCommand cmd = newMultiMessageAckCommon(entries);
         cmd.getAck()
@@ -1080,13 +1066,13 @@ public class Commands {
         return serializeWithSize(cmd);
     }
 
-    public static ByteBuf newAck(long consumerId, long ledgerId, long entryId, BitSetRecyclable ackSet, AckType ackType,
+    public static ByteBuf newAck(long consumerId, long ledgerId, long entryId, BitSet ackSet, AckType ackType,
                                  ValidationError validationError, Map<String, Long> properties, long requestId) {
         return newAck(consumerId, ledgerId, entryId, ackSet, ackType, validationError,
                 properties, -1L, -1L, requestId, -1);
     }
 
-    public static ByteBuf newAck(long consumerId, long ledgerId, long entryId, BitSetRecyclable ackSet, AckType ackType,
+    public static ByteBuf newAck(long consumerId, long ledgerId, long entryId, BitSet ackSet, AckType ackType,
                                  ValidationError validationError, Map<String, Long> properties, long txnIdLeastBits,
                                  long txnIdMostBits, long requestId, int batchSize) {
         BaseCommand cmd = localCmd(Type.ACK);
@@ -1146,7 +1132,7 @@ public class Commands {
     }
 
 
-    public static ByteBuf newAck(long consumerId, long ledgerId, long entryId, BitSetRecyclable ackSet, AckType ackType,
+    public static ByteBuf newAck(long consumerId, long ledgerId, long entryId, BitSet ackSet, AckType ackType,
                                  ValidationError validationError, Map<String, Long> properties, long txnIdLeastBits,
                                  long txnIdMostBits, long requestId) {
         return newAck(consumerId, ledgerId, entryId, ackSet, ackType, validationError,
