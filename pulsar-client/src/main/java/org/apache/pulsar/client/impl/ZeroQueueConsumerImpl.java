@@ -22,6 +22,7 @@ import static java.lang.String.format;
 import io.netty.buffer.ByteBuf;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -34,6 +35,7 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.impl.conf.ConsumerConfigurationData;
 import org.apache.pulsar.client.util.ExecutorProvider;
+import org.apache.pulsar.common.api.EncryptionContext;
 import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 import org.apache.pulsar.common.api.proto.MessageIdData;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
@@ -202,7 +204,7 @@ public class ZeroQueueConsumerImpl<T> extends ConsumerImpl<T> {
     void receiveIndividualMessagesFromBatch(BrokerEntryMetadata brokerEntryMetadata, MessageMetadata msgMetadata,
                                             int redeliveryCount, List<Long> ackSet, ByteBuf uncompressedPayload,
                                             MessageIdData messageId, ClientCnx cnx, long consumerEpoch,
-                                            boolean isEncrypted) {
+                                            Optional<EncryptionContext> encryptionContext) {
 
         rejectBatchMessageByClosingConsumer(
                 new MessageIdImpl(messageId.getLedgerId(), messageId.getEntryId(), getPartitionIndex())

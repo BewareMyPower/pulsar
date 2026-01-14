@@ -138,7 +138,7 @@ public class MessagePayloadContextImpl implements MessagePayloadContext {
                     ackSetInMessageId,
                     redeliveryCount,
                     consumerEpoch,
-                    false);
+                    ConsumerImpl.createEncryptionContext(messageMetadata));
         } finally {
             payloadBuffer.release();
         }
