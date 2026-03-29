@@ -37,8 +37,6 @@ import java.security.SecureRandom;
 import java.security.Security;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.InvalidKeySpecException;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,8 +58,8 @@ import org.apache.pulsar.client.api.EncryptionKeyInfo;
 import org.apache.pulsar.client.api.MessageCrypto;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.PulsarClientException.CryptoException;
+import org.apache.pulsar.common.api.EncryptionContext;
 import org.apache.pulsar.common.api.proto.EncryptionKeys;
-import org.apache.pulsar.common.api.proto.KeyValue;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
@@ -474,13 +472,14 @@ public class MessageCryptoBc implements MessageCrypto<MessageMetadata, MessageMe
         }
     }
 
-    private boolean decryptDataKey(String keyName, byte[] encryptedDataKey, List<KeyValue> encKeyMeta,
-            CryptoKeyReader keyReader) {
+    @Override
+    public boolean decrypt(Supplier<MessageMetadata> messageMetadataSupplier, ByteBuffer payload, ByteBuffer outBuffer,
+                           CryptoKeyReader keyReader) {
+        throw new IllegalStateException("this method should never be called");
+    }
 
-        Map<String, String> keyMeta = new HashMap<String, String>();
-        encKeyMeta.forEach(kv -> {
-            keyMeta.put(kv.getKey(), kv.getValue());
-        });
+    private boolean decryptDataKey(String keyName, byte[] encryptedDataKey, Map<String, String> keyMeta,
+            CryptoKeyReader keyReader) {
 
         // Read the private key info using callback
         EncryptionKeyInfo keyInfo = keyReader.getPrivateKey(keyName, keyMeta);
@@ -533,11 +532,11 @@ public class MessageCryptoBc implements MessageCrypto<MessageMetadata, MessageMe
         return true;
     }
 
-    private boolean decryptData(SecretKey dataKeySecret, MessageMetadata msgMetadata,
+    private boolean decryptData(SecretKey dataKeySecret, EncryptionContext context,
                                 ByteBuffer payload, ByteBuffer targetBuffer) {
 
         // unpack iv and encrypted data
-        iv =  msgMetadata.getEncryptionParam();
+        iv = context.getParam();
 
         GCMParameterSpec gcmParams = new GCMParameterSpec(tagLen, iv);
         try {
@@ -563,13 +562,11 @@ public class MessageCryptoBc implements MessageCrypto<MessageMetadata, MessageMe
         return inputLen + Math.max(inputLen, 512);
     }
 
-    private boolean getKeyAndDecryptData(MessageMetadata msgMetadata, ByteBuffer payload, ByteBuffer targetBuffer) {
-        List<EncryptionKeys> encKeys = msgMetadata.getEncryptionKeysList();
-
+    private boolean getKeyAndDecryptData(EncryptionContext context, ByteBuffer payload, ByteBuffer targetBuffer) {
         // Go through all keys to retrieve data key from cache
-        for (int i = 0; i < encKeys.size(); i++) {
+        for (final var entry : context.getKeys().entrySet()) {
 
-            byte[] msgDataKey = encKeys.get(i).getValue();
+            byte[] msgDataKey = entry.getValue().getKeyValue();
             byte[] keyDigest = digest.digest(msgDataKey);
             SecretKey storedSecretKey = dataKeyCache.getIfPresent(ByteBuffer.wrap(keyDigest));
             if (storedSecretKey != null) {
@@ -577,7 +574,7 @@ public class MessageCryptoBc implements MessageCrypto<MessageMetadata, MessageMe
                 // Taking a small performance hit here if the hash collides. When it
                 // returns a different key, decryption fails. At this point, we would
                 // call decryptDataKey to refresh the cache and come here again to decrypt.
-                if (decryptData(storedSecretKey, msgMetadata, payload, targetBuffer)) {
+                if (decryptData(storedSecretKey, context, payload, targetBuffer)) {
                     // If decryption succeeded, we can already return
                     return true;
                 }
@@ -591,37 +588,26 @@ public class MessageCryptoBc implements MessageCrypto<MessageMetadata, MessageMe
         return false;
     }
 
-    /*
-     * Decrypt the payload using the data key. Keys used to encrypt data key can be retrieved from msgMetadata
-     *
-     * @param msgMetadata Message Metadata
-     *
-     * @param payload Message which needs to be decrypted
-     *
-     * @param keyReader KeyReader implementation to retrieve key value
-     *
-     * @return true if success, false otherwise
-     */
     @Override
-    public boolean decrypt(Supplier<MessageMetadata> messageMetadataSupplier,
-                        ByteBuffer payload, ByteBuffer outBuffer, CryptoKeyReader keyReader) {
+    public int decryptApiVersion() {
+        return DECRYPT_V1;
+    }
 
-        MessageMetadata msgMetadata = messageMetadataSupplier.get();
+    @Override
+    public boolean decrypt(EncryptionContext context, ByteBuffer payload, ByteBuffer outBuffer,
+                           CryptoKeyReader keyReader) {
+
         // If dataKey is present, attempt to decrypt using the existing key
         if (dataKey != null) {
-            if (getKeyAndDecryptData(msgMetadata, payload, outBuffer)) {
+            if (getKeyAndDecryptData(context, payload, outBuffer)) {
                 return true;
             }
         }
 
         // dataKey is null or decryption failed. Attempt to regenerate data key
-        List<EncryptionKeys> encKeys = msgMetadata.getEncryptionKeysList();
-        EncryptionKeys encKeyInfo = encKeys.stream().filter(kbv -> {
-
-            byte[] encDataKey = kbv.getValue();
-            List<KeyValue> encKeyMeta = kbv.getMetadatasList();
-            return decryptDataKey(kbv.getKey(), encDataKey, encKeyMeta, keyReader);
-
+        final var encKeyInfo = context.getKeys().entrySet().stream().filter(entry -> {
+            byte[] encDataKey = entry.getValue().getKeyValue();
+            return decryptDataKey(entry.getKey(), encDataKey, entry.getValue().getMetadata(), keyReader);
         }).findFirst().orElse(null);
 
         if (encKeyInfo == null || dataKey == null) {
@@ -629,7 +615,7 @@ public class MessageCryptoBc implements MessageCrypto<MessageMetadata, MessageMe
             return false;
         }
 
-        return getKeyAndDecryptData(msgMetadata, payload, outBuffer);
+        return getKeyAndDecryptData(context, payload, outBuffer);
 
     }
 }
