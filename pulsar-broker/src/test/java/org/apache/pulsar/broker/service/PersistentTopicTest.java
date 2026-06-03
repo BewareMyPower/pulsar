@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
@@ -650,6 +651,55 @@ public class PersistentTopicTest extends MockedBookKeeperTestCase {
             // Expected
             assertTrue(ee.getCause() instanceof BrokerServiceException.NamingException);
         }
+    }
+
+    @Test
+    public void testFailedDurableSubscribeDeletesOpenedCursor() throws Exception {
+        PersistentTopic topic = new PersistentTopic(successTopicName, ledgerMock, brokerService);
+        topic.initialize().join();
+
+        String subscriptionName = "sub/with/slash";
+        String encodedSubscriptionName = Codec.encode(subscriptionName);
+        ManagedCursor nonDurableCursor = mock(ManagedCursor.class);
+        doReturn(false).when(nonDurableCursor).isDurable();
+        doReturn(subscriptionName).when(nonDurableCursor).getName();
+        doReturn(ledgerMock).when(nonDurableCursor).getManagedLedger();
+        PersistentSubscription nonDurableSubscription =
+                new PersistentSubscription(topic, subscriptionName, nonDurableCursor, false);
+        topic.getSubscriptions().put(subscriptionName, nonDurableSubscription);
+
+        ManagedCursor durableCursor = mock(ManagedCursor.class);
+        doReturn(true).when(durableCursor).isDurable();
+        doReturn(encodedSubscriptionName).when(durableCursor).getName();
+        doAnswer(invocationOnMock -> {
+            ((OpenCursorCallback) invocationOnMock.getArguments()[4]).openCursorComplete(durableCursor, null);
+            return null;
+        }).when(ledgerMock).asyncOpenCursor(eq(encodedSubscriptionName), any(InitialPosition.class), anyMap(),
+                anyMap(), any(OpenCursorCallback.class), any());
+        doAnswer(invocationOnMock -> {
+            ((DeleteCursorCallback) invocationOnMock.getArguments()[1]).deleteCursorComplete(null);
+            return null;
+        }).when(ledgerMock).asyncDeleteCursor(eq(encodedSubscriptionName), any(DeleteCursorCallback.class), any());
+
+        SubscriptionOption option = SubscriptionOption.builder().cnx(serverCnx)
+                .subscriptionName(subscriptionName).consumerId(1).subType(SubType.Exclusive)
+                .priorityLevel(0).consumerName("consumer-name").isDurable(true).startMessageId(null)
+                .metadata(Collections.emptyMap()).readCompacted(false)
+                .initialPosition(InitialPosition.Latest).subscriptionProperties(Optional.empty())
+                .startMessageRollbackDurationSec(0).replicatedSubscriptionStateArg(false).keySharedMeta(null)
+                .build();
+
+        Future<Consumer> subscribeFuture = topic.subscribe(option);
+        try {
+            subscribeFuture.get(1, TimeUnit.SECONDS);
+            fail("should fail with exception");
+        } catch (ExecutionException e) {
+            assertTrue(e.getCause() instanceof BrokerServiceException.NotAllowedException);
+        }
+
+        verify(ledgerMock).asyncDeleteCursor(eq(encodedSubscriptionName), any(DeleteCursorCallback.class), any());
+        assertSame(topic.getSubscription(subscriptionName), nonDurableSubscription);
+        assertSame(topic.getSubscription(subscriptionName).getCursor(), nonDurableCursor);
     }
 
     private SubscriptionOption getSubscriptionOption(CommandSubscribe cmd) {
