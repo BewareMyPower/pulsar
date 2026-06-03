@@ -1193,23 +1193,28 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
 
                 PersistentSubscription subscription = subscriptions.get(subscriptionName);
                 if (subscription == null) {
-                    PersistentSubscription newSubscription;
-                    try {
-                        newSubscription = createPersistentSubscription(subscriptionName, cursor, replicated,
-                                subscriptionProperties);
-                    } catch (Exception e) {
-                        deleteOpenedDurableCursor(cursor, subscriptionName, subscriptionFuture, e);
+                    subscription = subscriptions.computeIfAbsent(subscriptionName,
+                                  name -> createPersistentSubscription(subscriptionName, cursor,
+                                          replicated, subscriptionProperties));
+                } else {
+                    // if subscription exists, check if it's a non-durable subscription
+                    if (subscription.getCursor() != null && !subscription.getCursor().isDurable()) {
+                        ledger.asyncDeleteCursor(encodedSubscriptionName, new DeleteCursorCallback() {
+                            @Override
+                            public void deleteCursorComplete(Object ctx) {
+                            }
+
+                            @Override
+                            public void deleteCursorFailed(ManagedLedgerException exception, Object ctx) {
+                                log.warn().attr("subscription", subscriptionName)
+                                        .exceptionMessage(exception)
+                                        .log("Failed to delete cursor for conflicts");
+                            }
+                        }, null);
+                        subscriptionFuture.completeExceptionally(
+                                new NotAllowedException("NonDurable subscription with the same name already exists."));
                         return;
                     }
-                    PersistentSubscription existingSubscription =
-                            subscriptions.putIfAbsent(subscriptionName, newSubscription);
-                    subscription = existingSubscription != null ? existingSubscription : newSubscription;
-                }
-                // If subscription exists, check if it's a non-durable subscription.
-                if (subscription.getCursor() != null && !subscription.getCursor().isDurable()) {
-                    deleteOpenedDurableCursor(cursor, subscriptionName, subscriptionFuture,
-                            new NotAllowedException("NonDurable subscription with the same name already exists."));
-                    return;
                 }
                 if (replicated != null && replicated && !subscription.isReplicated()) {
                     // Flip the subscription state
@@ -1238,31 +1243,6 @@ public class PersistentTopic extends AbstractTopic implements Topic, AddEntryCal
             }
         }, null);
         return subscriptionFuture;
-    }
-
-    private void deleteOpenedDurableCursor(ManagedCursor cursor, String subscriptionName,
-                                           CompletableFuture<Subscription> subscriptionFuture, Throwable cause) {
-        if (!cursor.isDurable()) {
-            subscriptionFuture.completeExceptionally(cause);
-            return;
-        }
-
-        ledger.asyncDeleteCursor(cursor.getName(), new DeleteCursorCallback() {
-            @Override
-            public void deleteCursorComplete(Object ctx) {
-                subscriptionFuture.completeExceptionally(cause);
-            }
-
-            @Override
-            public void deleteCursorFailed(ManagedLedgerException exception, Object ctx) {
-                log.warn()
-                        .attr("subscription", subscriptionName)
-                        .attr("cursor", cursor.getName())
-                        .exceptionMessage(exception)
-                        .log("Failed to delete cursor after failed durable subscription creation");
-                subscriptionFuture.completeExceptionally(cause);
-            }
-        }, null);
     }
 
     private CompletableFuture<? extends Subscription> getNonDurableSubscription(String subscriptionName,

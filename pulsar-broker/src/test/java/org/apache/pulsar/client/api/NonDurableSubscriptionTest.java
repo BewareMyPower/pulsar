@@ -26,6 +26,7 @@ import static org.testng.Assert.assertTrue;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -192,8 +193,10 @@ public class NonDurableSubscriptionTest extends ProducerConsumerBase {
                     .startMessageIdInclusive()
                     .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
                     .subscribe();
+            Assert.fail("should fail since non-durable subscription already exist.");
         } catch (PulsarClientException.NotAllowedException exception) {
-            //ignore
+            final var cursors = admin.topics().getInternalStats(topicName).getCursors().keySet();
+            Assert.assertEquals(cursors, Set.of("mix-subscription"), "cursors: " + cursors);
         }
     }
 
