@@ -2274,7 +2274,7 @@ public class ManagedCursorImpl implements ManagedCursor {
             return;
         }
 
-        log.debug().attr("position", position).log("Mark delete");
+        log.info().attr("ml", ledger.name).attr("name", name).attr("position", position).log("XYZ Mark delete");
 
         Position newPosition = ackBatchPosition(position);
         Position markDeletePos = markDeletePosition;

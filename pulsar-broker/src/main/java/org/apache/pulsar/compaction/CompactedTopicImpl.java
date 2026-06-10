@@ -23,6 +23,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ComparisonChain;
 import io.netty.buffer.ByteBuf;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
@@ -52,6 +53,7 @@ import org.jspecify.annotations.Nullable;
  */
 @CustomLog
 public class CompactedTopicImpl implements CompactedTopic {
+    public static volatile Duration injectedOpenCompactedLedgerDelay = Duration.ZERO;
     static final long NEWER_THAN_COMPACTED = -0xfeed0fbaL;
     static final long COMPACT_LEDGER_EMPTY = -0xfeed0fbbL;
     static final int DEFAULT_MAX_CACHE_SIZE = 100;
@@ -72,6 +74,7 @@ public class CompactedTopicImpl implements CompactedTopic {
             compactedTopicContext = openCompactedLedger(bk, compactedLedgerId);
 
             compactionHorizon = p;
+            log.info().log("XYZ set horizon to " + p);
 
             // delete the ledger from the old context once the new one is open
             return compactedTopicContext.thenCompose(ctx -> {
@@ -186,7 +189,17 @@ public class CompactedTopicImpl implements CompactedTopic {
                                    promise.complete(ledger);
                                }
                            }, null, true);
-        return promise.thenApply((ledger) -> new CompactedTopicContext(
+
+        final CompletableFuture<LedgerHandle> injectedFuture;
+        if (injectedOpenCompactedLedgerDelay.toMillis() > 0) {
+            final var future = new CompletableFuture<Void>();
+            CompletableFuture.delayedExecutor(injectedOpenCompactedLedgerDelay.toMillis(), TimeUnit.MILLISECONDS)
+                    .execute(() -> future.complete(null));
+            injectedFuture = future.thenCompose(__ -> promise);
+        } else {
+            injectedFuture = promise;
+        }
+        return injectedFuture.thenApply((ledger) -> new CompactedTopicContext(
                                          ledger, createCache(ledger, DEFAULT_MAX_CACHE_SIZE)));
     }
 

@@ -25,13 +25,18 @@ import com.google.common.annotations.Beta;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
+import lombok.CustomLog;
 import org.apache.bookkeeper.mledger.Entry;
 import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.Position;
 import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.commons.collections4.CollectionUtils;
 
+@CustomLog
 public class CompactedTopicUtils {
+
+    public static volatile AtomicInteger emptyInjection = null;
 
     @Beta
     public static CompletableFuture<List<Entry>> asyncReadCompactedEntries(
@@ -49,6 +54,7 @@ public class CompactedTopicUtils {
         }
 
         CompletableFuture<Position> lastCompactedPositionFuture = topicCompactionService.getLastCompactedPosition();
+        log.info().log("XYZ read when horizon is " + lastCompactedPositionFuture.join());
 
         return lastCompactedPositionFuture.thenCompose(lastCompactedPosition -> {
             if (lastCompactedPosition == null
@@ -63,7 +69,10 @@ public class CompactedTopicUtils {
 
             int numberOfEntriesToRead = cursor.applyMaxSizeCap(maxEntries, bytesToRead);
 
-            return topicCompactionService.readCompactedEntries(readPosition, numberOfEntriesToRead)
+            final var readFuture = (emptyInjection == null || emptyInjection.getAndDecrement() > 0)
+                    ? topicCompactionService.readCompactedEntries(readPosition, numberOfEntriesToRead)
+                    : CompletableFuture.completedFuture(List.<Entry>of());
+            return readFuture
                     .thenApply(entries -> {
                         if (CollectionUtils.isEmpty(entries)) {
                             Position seekToPosition = lastCompactedPosition.getNext();

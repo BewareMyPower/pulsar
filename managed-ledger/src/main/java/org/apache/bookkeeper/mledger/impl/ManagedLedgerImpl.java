@@ -2727,11 +2727,20 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             LedgerInfo nextPointedLedger = Optional.ofNullable(ledgers.higherEntry(lastAckedPosition.getLedgerId()))
                     .map(Map.Entry::getValue).orElse(null);
 
+            log.info().attr("currLedger", curPointedLedger == null ? -1L : curPointedLedger.getLedgerId())
+                    .attr("nextLedger", nextPointedLedger == null ? -1L : nextPointedLedger.getLedgerId())
+                    .attr("cursor", cursor.getName())
+                    .attr("md", markDeletedPosition)
+                    .attr("lastAcked", lastAckedPosition)
+                    .attr("entries", curPointedLedger == null ? 0L : curPointedLedger.getEntries())
+                    .log("XYZ maybe update cursor");
+
             if (curPointedLedger != null) {
                 if (nextPointedLedger != null) {
                     if (lastAckedPosition.getEntryId() != -1
                             && lastAckedPosition.getEntryId() + 1 >= curPointedLedger.getEntries()) {
                         lastAckedPosition = PositionFactory.create(nextPointedLedger.getLedgerId(), -1);
+                        log.info().log("XYZ update lastAcked to " + lastAckedPosition);
                     }
                 } else {
                     log.debug().attr("cursor", cursor)
@@ -2745,6 +2754,7 @@ public class ManagedLedgerImpl implements ManagedLedger, CreateCallback {
             }
 
             int compareResult = lastAckedPosition.compareTo(markDeletedPosition);
+            log.info().log("XYZ compareResult " + compareResult);
             if (compareResult > 0) {
                 Position finalPosition = lastAckedPosition;
                 log.info().attr("cursor", cursor)

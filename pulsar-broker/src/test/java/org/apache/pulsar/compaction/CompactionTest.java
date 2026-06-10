@@ -42,6 +42,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -56,6 +57,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
@@ -70,6 +72,7 @@ import org.apache.bookkeeper.mledger.ManagedCursor;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.ManagedLedgerInfo;
 import org.apache.bookkeeper.mledger.Position;
+import org.apache.bookkeeper.mledger.PositionFactory;
 import org.apache.bookkeeper.mledger.impl.ManagedLedgerImpl;
 import org.apache.commons.lang3.mutable.MutableLong;
 import org.apache.commons.lang3.reflect.FieldUtils;
@@ -87,6 +90,7 @@ import org.apache.pulsar.client.api.CryptoKeyReader;
 import org.apache.pulsar.client.api.EncryptionKeyInfo;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.api.MessageIdAdv;
 import org.apache.pulsar.client.api.MessageRoutingMode;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.ProducerBuilder;
@@ -128,6 +132,7 @@ public class CompactionTest extends MockedPulsarServiceBaseTest {
     @Override
     protected void doInitConf() throws Exception {
         super.doInitConf();
+        conf.setSystemTopicEnabled(false);
         conf.setDispatcherMaxReadBatchSize(1);
     }
 
@@ -2647,5 +2652,66 @@ public class CompactionTest extends MockedPulsarServiceBaseTest {
         admin.topics().triggerCompaction(topic);
         Awaitility.await().untilAsserted(() -> assertEquals(
                 admin.topics().compactionStatus(topic).status, LongRunningProcessStatus.Status.SUCCESS));
+    }
+
+    @Test
+    public void testCompactionReadOnEmptyLedger() throws Exception {
+        final var topic = "persistent://my-tenant/my-ns/compaction-read-on-empty-ledger";
+        try (final var producer = pulsarClient.newProducer(Schema.STRING).topic(topic).create()) {
+            for (int i = 0; i < 3; i++) {
+                producer.newMessage().key("key").value("value-" + i).send();
+            }
+            for (int i = 0; i < 10; i++) {
+                producer.newMessage().key("key-" + i).value("v" + i).send();
+            }
+        }
+
+        @Cleanup final var reader = pulsarClient.newReader(Schema.STRING).readCompacted(true).topic(topic)
+                .subscriptionName("reader")
+                .startMessageId(MessageId.earliest).create();
+        while (reader.hasMessageAvailable()) {
+            final var msg = reader.readNext();
+            if (msg.getValue().equals("value-2") && msg.getKey().equals("key")) {
+                break;
+            }
+        }
+
+        var ml = (ManagedLedgerImpl) ((PersistentTopic) pulsar.getBrokerService().getTopicIfExists(topic).get()
+                .orElseThrow()).getManagedLedger();
+        ml.getConfig().setMaxEntriesPerLedger(1);
+        ml.getConfig().setMaxSizePerLedgerMb(0);
+        ml.getConfig().setMinimumRolloverTime(0, TimeUnit.MILLISECONDS);
+        ml.rollCurrentLedgerIfFull();
+        Thread.sleep(500);
+
+        triggerAndWaitCompaction(topic);
+
+        CompactedTopicImpl.injectedOpenCompactedLedgerDelay = Duration.ofSeconds(3);
+        admin.namespaces().unload("my-tenant/my-ns");
+
+        Thread.sleep(50);
+        admin.lookups().lookupTopic(topic);
+        final var persistentTopic = (PersistentTopic) pulsar.getBrokerService().getTopic(topic, true).get()
+                .orElseThrow();
+        final var trimFuture = new CompletableFuture<Void>();
+        persistentTopic.getManagedLedger().trimConsumedLedgersInBackground(trimFuture);
+        trimFuture.get();
+
+        CompactedTopicUtils.emptyInjection = new AtomicInteger(1);
+
+        Thread.sleep(100); // wait until reconnection first (initial backoff: 100ms)
+
+        while (reader.hasMessageAvailable()) {
+            final var msg = reader.readNextAsync().get(3, TimeUnit.SECONDS);
+            log.info().attr("id", msg.getMessageId()).attr("key", msg.getKey())
+                    .attr("value", msg.getValue()).log("read");
+        }
+
+        final var serverConsumer = persistentTopic.getSubscription("reader").getDispatcher().getConsumers().get(0);
+        assertEquals(((MessageIdAdv) serverConsumer.getStartMessageId()).getEntryId(), 2L);
+
+        final var emptyLedgerId = persistentTopic.getManagedLedger().getLedgersInfo().lastEntry().getKey();
+        assertEquals(persistentTopic.getTopicCompactionService().getLastCompactedPosition().get(),
+                PositionFactory.create(emptyLedgerId, -1L));
     }
 }
