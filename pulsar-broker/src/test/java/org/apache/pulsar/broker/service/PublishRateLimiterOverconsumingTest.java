@@ -21,6 +21,8 @@ package org.apache.pulsar.broker.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -73,6 +75,7 @@ public class PublishRateLimiterOverconsumingTest extends BrokerTestBase {
         int numberOfMessagesForEachProducer = (rateInMsg * (durationSeconds + 1))
                 / numberOfProducersWithIndependentClients;
         int totalMessages = numberOfProducersWithIndependentClients * numberOfMessagesForEachProducer;
+        List<Long> sendTimestamps = Collections.synchronizedList(new ArrayList<>());
 
         // configure publish throttling rate
         BrokerService brokerService = pulsar.getBrokerService();
@@ -152,6 +155,7 @@ public class PublishRateLimiterOverconsumingTest extends BrokerTestBase {
                         Producer<Integer> producer = producers.get(i);
                         for (int messageNumber = 0; messageNumber < numberOfMessagesForEachProducer; messageNumber++) {
                             producer.send(messageNumber);
+                            sendTimestamps.add(System.nanoTime());
                         }
                         return null;
                     };
@@ -180,5 +184,30 @@ public class PublishRateLimiterOverconsumingTest extends BrokerTestBase {
         assertThat(refillRate)
                 .describedAs("publish rate after the initial token bucket capacity is consumed")
                 .isLessThanOrEqualTo(rateInMsg * 1.4d);
+
+        // Per-second window check to catch intermittent overconsumption that could be hidden in the average
+        List<Long> sortedTimestamps = new ArrayList<>(sendTimestamps);
+        Collections.sort(sortedTimestamps);
+        List<Long> perSecondCounts = new ArrayList<>();
+        int idx = 0;
+        for (int window = 0; idx < sortedTimestamps.size(); window++) {
+            long windowEnd = sendStartNanos + (window + 1) * 1_000_000_000L;
+            int count = 0;
+            while (idx < sortedTimestamps.size() && sortedTimestamps.get(idx) < windowEnd) {
+                count++;
+                idx++;
+            }
+            perSecondCounts.add((long) count);
+        }
+        // Skip first window (initial burst) and last window (may be partial).
+        // Use 2-second sliding window averages to smooth out GC pauses and scheduling variance.
+        for (int i = 1; i < perSecondCounts.size() - 2; i++) {
+            long rateTwoSecond = perSecondCounts.get(i) + perSecondCounts.get(i + 1);
+            log.info().attr("windowStartSecond", i).attr("rateTwoSecond", rateTwoSecond)
+                    .log("2-second sliding window publish rate");
+            assertThat((double) rateTwoSecond)
+                    .describedAs("2-second sliding window publish rate starting at second %d", i)
+                    .isLessThanOrEqualTo(rateInMsg * 2 * 1.55d);
+        }
     }
 }
