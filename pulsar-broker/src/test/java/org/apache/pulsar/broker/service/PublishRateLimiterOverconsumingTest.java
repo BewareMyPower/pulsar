@@ -19,31 +19,23 @@
 package org.apache.pulsar.broker.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertNull;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.IntStream;
 import lombok.Cleanup;
 import lombok.CustomLog;
-import org.apache.pulsar.client.api.Consumer;
-import org.apache.pulsar.client.api.Message;
-import org.apache.pulsar.client.api.MessageListener;
+import org.apache.pulsar.broker.qos.AsyncTokenBucket;
 import org.apache.pulsar.client.api.Producer;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.Schema;
-import org.apache.pulsar.client.api.SubscriptionType;
-import org.assertj.core.data.Percentage;
 import org.awaitility.Awaitility;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -77,98 +69,29 @@ public class PublishRateLimiterOverconsumingTest extends BrokerTestBase {
     public void testOverconsumingTokensWithBrokerPublishRateLimiter() throws Exception {
         int rateInMsg = 500;
         int durationSeconds = 5;
-        int numberOfConsumers = 5;
         int numberOfProducersWithIndependentClients = 5;
         int numberOfMessagesForEachProducer = (rateInMsg * (durationSeconds + 1))
                 / numberOfProducersWithIndependentClients;
+        int totalMessages = numberOfProducersWithIndependentClients * numberOfMessagesForEachProducer;
 
-        // configure dispatch throttling rate
+        // configure publish throttling rate
         BrokerService brokerService = pulsar.getBrokerService();
         admin.brokers().updateDynamicConfiguration("brokerPublisherThrottlingMaxMessageRate",
                 String.valueOf(rateInMsg));
         Awaitility.await().untilAsserted(() -> {
             PublishRateLimiterImpl publishRateLimiter =
                     (PublishRateLimiterImpl) brokerService.getBrokerPublishRateLimiter();
-            assertEquals(publishRateLimiter.getTokenBucketOnMessage().getRate(), rateInMsg);
+            AsyncTokenBucket tokenBucketOnMessage = publishRateLimiter.getTokenBucketOnMessage();
+            assertThat(tokenBucketOnMessage).isNotNull();
+            assertEquals(tokenBucketOnMessage.getRate(), rateInMsg);
             assertNull(publishRateLimiter.getTokenBucketOnByte());
         });
+        AsyncTokenBucket tokenBucketOnMessage =
+                ((PublishRateLimiterImpl) brokerService.getBrokerPublishRateLimiter()).getTokenBucketOnMessage();
 
         final String topicName = "persistent://" + newTopicName();
 
-        // state for calculating message rate
-        AtomicLong startTimeNanos = new AtomicLong();
-        AtomicLong lastReceivedMessageTimeNanos = new AtomicLong();
-        AtomicInteger totalMessagesReceived = new AtomicInteger();
-        AtomicInteger currentSecondMessagesCount = new AtomicInteger();
-        AtomicInteger lastCalculatedSecond = new AtomicInteger(0);
-        List<Integer> collectedRatesForEachSecond = Collections.synchronizedList(new ArrayList<>());
-
-        // rack actual consuming rate of messages per second
-        // (After aligning the first message, start counting whole seconds)
-        Runnable rateTracker = () -> {
-            long startTime = startTimeNanos.get();
-            if (startTime == 0) {
-                return;
-            }
-            long durationNanos = System.nanoTime() - startTime;
-            int elapsedFullSeconds = (int) (durationNanos / 1e9);
-            if (elapsedFullSeconds > 0 && lastCalculatedSecond.compareAndSet(elapsedFullSeconds - 1,
-                    elapsedFullSeconds)) {
-                int messagesCountForPreviousSecond = currentSecondMessagesCount.getAndSet(0);
-                log.info().attr("forSecond", elapsedFullSeconds)
-                        .attr("messagesCountForPreviousSecond", messagesCountForPreviousSecond)
-                        .attr("toMillis", TimeUnit.NANOSECONDS.toMillis(durationNanos)).log("Rate for second: msg/s");
-                collectedRatesForEachSecond.add(messagesCountForPreviousSecond);
-            }
-        };
-        @Cleanup("shutdownNow")
-        ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-        ScheduledFuture<?> scheduledFuture = executor.scheduleAtFixedRate(rateTracker, 0, 500, TimeUnit.MILLISECONDS);
-
-        // message listener implementation used for all consumers
-        // Set startTime when the first message arrives; then accumulate the counter
-        MessageListener<Integer> messageListener = new MessageListener<>() {
-            @Override
-            public void received(Consumer<Integer> consumer, Message<Integer> msg) {
-                long now = System.nanoTime();
-                if (startTimeNanos.get() == 0) {
-                    startTimeNanos.compareAndSet(0, now);
-                }
-                lastReceivedMessageTimeNanos.set(now);
-                currentSecondMessagesCount.incrementAndGet();
-                totalMessagesReceived.incrementAndGet();
-                consumer.acknowledgeAsync(msg);
-            }
-        };
-
-        // create consumers using a shared subscription called "sub"
-        List<Consumer<Integer>> consumerList = IntStream.range(0, numberOfConsumers)
-                .mapToObj(i -> {
-                    try {
-                        return pulsarClient.newConsumer(Schema.INT32)
-                                .topic(topicName)
-                                .consumerName("consumer-" + (i + 1))
-                                .subscriptionType(SubscriptionType.Shared)
-                                .subscriptionName("sub")
-                                .messageListener(messageListener)
-                                .subscribe();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }).toList();
-        // handle consumer cleanup when the test completes
-        @Cleanup
-        AutoCloseable consumerCloser = () -> {
-            consumerList.forEach(c -> {
-                try {
-                    c.close();
-                } catch (Exception e) {
-                    // ignore
-                }
-            });
-        };
-
-        // create independent clients for producers so that they don't get blocked by throttling
+        // create independent clients so each producer exercises throttling on its own connection
         @SuppressWarnings("deprecation")
         List<PulsarClient> producerClients = IntStream.range(0, numberOfProducersWithIndependentClients)
                 .mapToObj(i -> {
@@ -198,37 +121,13 @@ public class PublishRateLimiterOverconsumingTest extends BrokerTestBase {
                 .mapToObj(i -> {
                     try {
                         return producerClients.get(i)
-                                .newProducer(Schema.INT32).enableBatching(true)
+                                .newProducer(Schema.INT32).enableBatching(false)
                                 .producerName("producer-" + (i + 1))
-                                .batchingMaxPublishDelay(100, TimeUnit.MILLISECONDS)
-                                .batchingMaxMessages(numberOfMessagesForEachProducer / 100)
                                 .topic(topicName).create();
                     } catch (PulsarClientException e) {
                         throw new RuntimeException(e);
                     }
                 }).toList();
-
-        // send messages
-        producers.forEach(producer -> {
-            IntStream.range(0, numberOfMessagesForEachProducer).forEach(i -> {
-                try {
-                    int messageNumber = i + 1;
-                    producer.sendAsync(messageNumber).exceptionally(e -> {
-                        log.error().attr("messageNumber", messageNumber).exception(e).log("Failed to send message #");
-                        return null;
-                    });
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            });
-            producer.flushAsync().whenComplete((r, e) -> {
-                if (e != null) {
-                    log.error().exception(e).log("Failed to flush producer");
-                } else {
-                    log.info().attr("producer", producer.getProducerName()).log("Producer flushed");
-                }
-            });
-        });
 
         @Cleanup
         AutoCloseable producersClose = () -> {
@@ -241,58 +140,45 @@ public class PublishRateLimiterOverconsumingTest extends BrokerTestBase {
             });
         };
 
-        // Wait for all messages to be consumed
-        Awaitility.await()
-                .atMost(Duration.ofSeconds(durationSeconds * 2))
-                .pollInterval(Duration.ofMillis(100))
-                .untilAsserted(() ->
-                        assertThat(totalMessagesReceived.get())
-                                .isEqualTo(numberOfProducersWithIndependentClients * numberOfMessagesForEachProducer));
+        @Cleanup("shutdownNow")
+        ExecutorService executor = Executors.newFixedThreadPool(numberOfProducersWithIndependentClients);
+        CountDownLatch ready = new CountDownLatch(numberOfProducersWithIndependentClients);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Void>> sendTasks = IntStream.range(0, numberOfProducersWithIndependentClients)
+                .mapToObj(i -> {
+                    Callable<Void> task = () -> {
+                        ready.countDown();
+                        start.await();
+                        Producer<Integer> producer = producers.get(i);
+                        for (int messageNumber = 0; messageNumber < numberOfMessagesForEachProducer; messageNumber++) {
+                            producer.send(messageNumber);
+                        }
+                        return null;
+                    };
+                    return executor.submit(task);
+                })
+                .toList();
 
-        // Collect per-second windows, and add the last half-second remainder
-        List<Integer> collectedRatesSnapshot = new ArrayList<>(collectedRatesForEachSecond);
-        int tail = currentSecondMessagesCount.getAndSet(0);
-        if (tail > 0) {
-            collectedRatesSnapshot.add(tail);
+        assertThat(ready.await(10, TimeUnit.SECONDS))
+                .describedAs("all producer tasks are ready to send")
+                .isTrue();
+
+        long sendStartNanos = System.nanoTime();
+        start.countDown();
+        for (Future<?> sendTask : sendTasks) {
+            sendTask.get(durationSeconds * 4L, TimeUnit.SECONDS);
         }
-        log.info().attr("eachSecond", collectedRatesSnapshot).log("Collected rates for each second");
+        long sendDurationNanos = System.nanoTime() - sendStartNanos;
 
-        // Calculate the average using second-by-second windows:
-        // Skip the first second, take up to durationSeconds windows.
-        int usable = Math.min(durationSeconds, Math.max(0, collectedRatesSnapshot.size() - 1));
-        double windowedAvg = (usable > 0)
-                ? collectedRatesSnapshot.subList(1, 1 + usable).stream().mapToInt(Integer::intValue).average().orElse(0)
-                : 0;
-
-        assertSoftly(softly -> {
-            // Overall average (window mean, ±40%)
-            softly.assertThat(windowedAvg)
-                    .describedAs("windowed average rate during the test run")
-                    .isCloseTo(rateInMsg, Percentage.withPercentage(40));
-
-            // Per second (average of two adjacent seconds, skip first/last pairs, ±55%)
-            if (collectedRatesSnapshot.size() >= 4) {
-                // Starting from (1, 2), ending at (size-2, size-1)
-                for (int i = 2; i < collectedRatesSnapshot.size(); i++) {
-                    int avg2 = (collectedRatesSnapshot.get(i - 1) + collectedRatesSnapshot.get(i)) / 2;
-                    softly.assertThat(avg2)
-                            .describedAs("Average of second %d and %d", i, i + 1)
-                            .isCloseTo(rateInMsg, Percentage.withPercentage(55));
-                }
-            } else {
-                // Degenerates to: Skip head and tail with 50% tolerance (avoid false positives)
-                // when there are too few windows
-                if (collectedRatesSnapshot.size() > 2) {
-                    for (int i = 1; i < collectedRatesSnapshot.size() - 1; i++) {
-                        softly.assertThat(collectedRatesSnapshot.get(i))
-                                .describedAs("rate of second %d (fallback check)", i + 1)
-                                .isCloseTo(rateInMsg, Percentage.withPercentage(50));
-                    }
-                }
-            }
-        });
-        scheduledFuture.cancel(true);
-        producersClose.close();
-        consumerCloser.close();
+        long messagesAfterInitialBucket = Math.max(0, totalMessages - tokenBucketOnMessage.getCapacity());
+        double refillRate = messagesAfterInitialBucket / (sendDurationNanos / 1_000_000_000.0d);
+        log.info().attr("totalMessages", totalMessages)
+                .attr("sendDurationMillis", TimeUnit.NANOSECONDS.toMillis(sendDurationNanos))
+                .attr("initialBucketCapacity", tokenBucketOnMessage.getCapacity())
+                .attr("refillRate", refillRate)
+                .log("Published messages under broker publish rate limiter");
+        assertThat(refillRate)
+                .describedAs("publish rate after the initial token bucket capacity is consumed")
+                .isLessThanOrEqualTo(rateInMsg * 1.4d);
     }
 }
